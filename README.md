@@ -1,109 +1,44 @@
-# Book Rewriter (DOCX → Local Vector Store → Kimi K2 Editing)
+# Book Rewriter
 
-A production-ready pipeline to turn an old DOCX draft into a publishable rewrite while avoiding context drift.
+A pipeline to rewrite book chapters while preserving style and continuity.
 
-It does:
-- Parse a DOCX manuscript
-- Split into chapters (supports `Chapter N: Title`)
-- Ignores TOC dot-leader lines (`Chapter 21: Jacob .... 89`)
-- Chunk + embed locally (Mistral embeddings)
-- Store vectors in a local FAISS index
-- Create a global “Book Bible” using Kimi K2 (Nebius OpenAI-compatible)
-- Rewrite chapters with retrieval + global constraints
+## Features
 
-## Why this workflow
-Editing “chapter by chapter” in isolation causes drift: characters change, tone shifts, continuity breaks.
-This pipeline keeps a global memory (Book Bible) and injects relevant context into every rewrite.
-
-
+- Parse DOCX manuscripts and split into chapters
+- Create a global "Book Bible" for story consistency
+- Rewrite chapters with expanded, vivid detail ("movie in mind" style)
+- Export to PDF
+- Local FAISS vector store for retrieval
 
 ## Setup
 
-### 1) Install
 ```bash
 pip install -r requirements.txt
-````
-
-### 2) Environment variables
-
-Copy `.env.example` → `.env` and fill keys:
-
-```bash
-NEBIUS_API_KEY=...
-MISTRAL_API_KEY=...
 ```
 
+Copy `.env.example` → `.env` and add your API keys:
+- `NEBIUS_API_KEY` - for Kimi/Nebius LLM
+- `MISTRAL_API_KEY` - for embeddings
 
-## Commands
-
-### Index your DOCX
-
-Build a local vector store from the manuscript:
-
-```bash
-python -m book_rewriter.cli index "YourBook.docx"
-```
-
-### Sanity check chapter splitting
-
-Exports exact chapter text so you can confirm the splitter is correct:
+## Usage
 
 ```bash
-python -m book_rewriter.cli export-chapters "YourBook.docx" --out chapters.json
+# 1. Index your DOCX
+python -m book_rewriter.cli index "Book/YourBook.docx"
+
+# 2. Create Book Bible
+python -m book_rewriter.cli bible --docx Book/YourBook.docx
+
+# 3. Rewrite a chapter (chapter numbers are 1-based)
+python -m book_rewriter.cli rewrite 3 --bible book_bible.md --docx Book/YourBook.docx
+
+# 4. Create PDF from rewritten chapters
+python create_book_pdf.py
 ```
-
-### Create the Book Bible
-
-This uses retrieval from the local index + Kimi K2:
-
-```bash
-python -m book_rewriter.cli bible --out book_bible.md
-```
-
-### Rewrite a chapter
-
-Requires `book_bible.md`:
-
-```bash
-python -m book_rewriter.cli rewrite 3 --bible book_bible.md
-```
-
-Output default: `rewrites/chapter_03.md`
-
-### Search the manuscript memory
-
-```bash
-python -m book_rewriter.cli search "Where does the protagonist first lie?" --k 10
-```
-
-
 
 ## Notes
 
-* Embeddings: Mistral `mistral-embed`
-* Retrieval: cosine similarity via L2-normalized vectors + inner product FAISS index
-* Kimi K2: accessed via Nebius OpenAI-compatible endpoint
-* If your chapter headings use different formatting, edit `book_rewriter/splitter.py`
-
-
-
-## Next improvements (optional)
-
-* Add exact-chapter rewrite (no excerpt stitching) by storing chapter boundaries + concatenating all chunks for that chapter
-* Add “continuity checker” command: scan for contradictions vs Book Bible
-* Add “style sheet” extraction for voice consistency
-
-
-## How to run (quick)
-
-```bash
-# 1) index
-python -m book_rewriter.cli index "YourBook.docx"
-
-# 2) make bible
-python -m book_rewriter.cli bible --out book_bible.md
-
-# 3) rewrite chapter 1
-python -m book_rewriter.cli rewrite 1 --bible book_bible.md
-```
-
+- Rewrites preserve original simple style while adding sensory detail
+- No em-dashes or contractions in output
+- Output: `rewrites/chapter_XX.md` files
+- PDF output: `rewrites/book.pdf`
