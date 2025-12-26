@@ -12,8 +12,8 @@ class Settings:
 
     index_dir: str
 
-    chunk_char_target: int = 1800
-    chunk_char_overlap: int = 220
+    chunk_char_target: int = 1200
+    chunk_char_overlap: int = 180
     top_k: int = 10
 
 def load_settings() -> Settings:

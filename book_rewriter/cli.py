@@ -1,8 +1,10 @@
 import json
+import logging
 import os
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
+from rich.logging import RichHandler
 
 from .config import load_settings
 from .pipeline import (
@@ -14,6 +16,15 @@ from .pipeline import (
 )
 
 console = Console()
+
+# Configure rich logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(console=console, rich_tracebacks=True)],
+)
+log = logging.getLogger("book-rewriter")
 
 def _check_env(s):
     missing = []
@@ -36,13 +47,15 @@ def main():
     p_index = sub.add_parser("index", help="Build local FAISS index from DOCX")
     p_index.add_argument("docx_path")
 
-    p_bible = sub.add_parser("bible", help="Create Book Bible from index")
+    p_bible = sub.add_parser("bible", help="Create Book Bible from DOCX")
     p_bible.add_argument("--out", default="book_bible.md")
+    p_bible.add_argument("--docx", default="")
 
     p_rewrite = sub.add_parser("rewrite", help="Rewrite a chapter using Book Bible + retrieval")
     p_rewrite.add_argument("chapter_idx", type=int)
     p_rewrite.add_argument("--bible", default="book_bible.md")
     p_rewrite.add_argument("--out", default="")
+    p_rewrite.add_argument("--docx", default="")
 
     p_search = sub.add_parser("search", help="Search index with a query")
     p_search.add_argument("query")
@@ -55,20 +68,33 @@ def main():
     args = p.parse_args()
 
     if args.cmd == "index":
+        log.info(f"Reading DOCX: {args.docx_path}")
         info = index_book(args.docx_path, s)
+        log.info(f"Indexed {info['chunks_indexed']} chunks from {info['chapters_detected']} chapters")
+        log.info(f"Index saved to: {info['index_dir']}")
         console.print("[green]OK[/green] Indexed.")
-        console.print(info)
 
     elif args.cmd == "bible":
-        out = create_book_bible(s, out_path=args.out)
-        console.print(f"[green]OK[/green] Book Bible written to: {out}")
+        log.info("Building Book Bible from chapter text...")
+        docx_path = args.docx if args.docx else None
+        out = create_book_bible(s, out_path=args.out, docx_path=docx_path)
+        log.info(f"Book Bible written to: {out}")
+        console.print("[green]OK[/green] Book Bible created.")
 
     elif args.cmd == "rewrite":
-        out = rewrite_chapter(args.chapter_idx, s, book_bible_path=args.bible, out_path=args.out)
-        console.print(f"[green]OK[/green] Rewrite written to: {out}")
+        # Convert 1-based chapter number to 0-based index
+        chapter_idx = args.chapter_idx - 1
+        log.info(f"Rewriting chapter {args.chapter_idx} (index {chapter_idx})...")
+        log.info(f"Using book bible: {args.bible}")
+        docx_path = args.docx if args.docx else None
+        out = rewrite_chapter(chapter_idx, s, book_bible_path=args.bible, out_path=args.out, docx_path=docx_path)
+        log.info(f"Rewrite written to: {out}")
+        console.print("[green]OK[/green] Rewrite complete.")
 
     elif args.cmd == "search":
+        log.info(f"Searching for: '{args.query}' (k={args.k})")
         hits = retrieve(args.query, s, k=args.k)
+        log.info(f"Found {len(hits)} matches")
         table = Table(title="Top matches")
         table.add_column("Score", justify="right")
         table.add_column("Chapter")
@@ -84,10 +110,13 @@ def main():
         console.print(table)
 
     elif args.cmd == "export-chapters":
+        log.info(f"Exporting chapters from: {args.docx_path}")
         chapters = export_chapter_text(args.docx_path, s)
+        log.info(f"Found {len(chapters)} chapters")
         with open(args.out, "w", encoding="utf-8") as f:
             json.dump(chapters, f, ensure_ascii=False, indent=2)
-        console.print(f"[green]OK[/green] Exported chapters to: {args.out}")
+        log.info(f"Exported chapters to: {args.out}")
+        console.print("[green]OK[/green] Chapters exported.")
 
 if __name__ == "__main__":
     main()
