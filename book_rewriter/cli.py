@@ -11,6 +11,7 @@ from .pipeline import (
     index_book,
     create_book_bible,
     rewrite_chapter,
+    edit_chapter,
     retrieve,
     export_chapter_text,
 )
@@ -65,6 +66,12 @@ def main():
     p_export.add_argument("docx_path")
     p_export.add_argument("--out", default="chapters.json")
 
+    p_edit = sub.add_parser("edit", help="Edit an existing rewritten chapter with a specific request")
+    p_edit.add_argument("chapter_path", help="Path to the chapter .md file to edit")
+    p_edit.add_argument("request", help="Edit request (e.g., 'add more sensory detail', 'slow down pacing', 'include Jacob POV')")
+    p_edit.add_argument("--bible", default="book_bible.md", help="Path to book bible")
+    p_edit.add_argument("--out", default="", help="Output path (default: overwrite original)")
+
     args = p.parse_args()
 
     if args.cmd == "index":
@@ -117,6 +124,19 @@ def main():
             json.dump(chapters, f, ensure_ascii=False, indent=2)
         log.info(f"Exported chapters to: {args.out}")
         console.print("[green]OK[/green] Chapters exported.")
+
+    elif args.cmd == "edit":
+        log.info(f"Editing chapter: {args.chapter_path}")
+        log.info(f"Edit request: {args.request}")
+        out = edit_chapter(
+            chapter_path=args.chapter_path,
+            edit_request=args.request,
+            s=s,
+            book_bible_path=args.bible,
+            out_path=args.out if args.out else "",
+        )
+        log.info(f"Edited chapter saved to: {out}")
+        console.print("[green]OK[/green] Chapter edited.")
 
 if __name__ == "__main__":
     main()

@@ -18,6 +18,8 @@ from .prompts import (
     BOOK_BIBLE_USER_TEMPLATE,
     REWRITE_SYSTEM,
     REWRITE_USER_TEMPLATE,
+    EDIT_SYSTEM,
+    EDIT_USER_TEMPLATE,
 )
 
 def build_chunks(docx_path: str, s: Settings) -> List[Dict[str, Any]]:
@@ -225,4 +227,60 @@ CONTINUITY CONTEXT FROM NEARBY CHAPTERS:
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(rewritten)
 
+    return out_path
+
+def edit_chapter(
+    chapter_path: str,
+    edit_request: str,
+    s: Settings,
+    book_bible_path: str = "book_bible.md",
+    out_path: str = "",
+) -> str:
+    """
+    Apply a specific edit request to an existing rewritten chapter.
+
+    Usage:
+    - Fill gaps: "Add more sensory detail to the cabin scene"
+    - Fix pacing: "Slow down the confrontation between Simon and Gene"
+    - Add content: "Include Jacob's POV at the end of this chapter"
+    - Fix issues: "Remove the em-dash usage and contractions"
+    - Change tone: "Make this scene more tense and claustrophobic"
+    """
+    log.info(f"Loading book bible from: {book_bible_path}")
+    with open(book_bible_path, "r", encoding="utf-8") as f:
+        bible = f.read()
+
+    log.info(f"Loading chapter from: {chapter_path}")
+    with open(chapter_path, "r", encoding="utf-8") as f:
+        original_chapter = f.read()
+
+    # Extract chapter title from the markdown
+    import re
+    title_match = re.search(r"^##\s+(.+)$", original_chapter, re.MULTILINE)
+    chapter_title = title_match.group(1) if title_match else "Unknown Chapter"
+
+    user_prompt = EDIT_USER_TEMPLATE.format(
+        book_bible=bible,
+        original_chapter=original_chapter,
+        edit_request=edit_request,
+    )
+
+    log.info(f"Applying edit: {edit_request[:50]}...")
+    edited = kimi_chat(
+        api_key=s.nebius_api_key,
+        base_url=s.nebius_base_url,
+        model=s.kimi_model,
+        system_prompt=EDIT_SYSTEM,
+        user_text=user_prompt,
+        temperature=0.4,
+    )
+
+    if not out_path:
+        # Preserve original filename
+        out_path = chapter_path
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(edited)
+
+    log.info(f"Edited chapter saved to: {out_path}")
     return out_path

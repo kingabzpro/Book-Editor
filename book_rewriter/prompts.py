@@ -1,20 +1,103 @@
 BOOK_BIBLE_SYSTEM = """You are a professional developmental editor and line editor.
-You produce structured, publishable guidance.
+You produce structured, publishable guidance in markdown format.
 Do not invent missing facts; use UNKNOWN if not present.
 Keep it clear, concrete, and consistent.
 """
 
 BOOK_BIBLE_USER_TEMPLATE = """Create a "Book Bible" from the draft excerpts.
 
-Output EXACTLY these sections:
-1) One-paragraph premise + genre shelf guess
-2) Plot summary (beginning → middle → end), with key reveals
-3) Chapter-by-chapter synopsis (2–4 bullets each)
-4) Character dossier (name, role, goal, flaw, secret, arc)
-5) Timeline + continuity constraints
-6) Themes + tone + POV/tense notes
-7) Problems to fix (ranked)
-8) Rewrite strategy (3 passes)
+Output EXACTLY these sections with markdown formatting:
+
+## 1. Premise & Genre
+
+> **One-paragraph premise + genre shelf guess**
+
+[Your premise here]
+
+## 2. Plot Summary
+
+> **Beginning → Middle → End, with key reveals**
+
+### Beginning
+
+[Beginning summary]
+
+### Middle
+
+[Middle summary]
+
+### End
+
+[End summary]
+
+## 3. Settings & Locations
+
+| Location | Description | Significance |
+|----------|-------------|--------------|
+| [Name] | [Physical description] | [Thematic/emotional role] |
+
+### Location Rules
+
+- **Location Type** = Symbolic meaning
+- Add rules for each major setting type
+
+## 4. Chapter-by-Chapter Synopsis
+
+| Chapter | POV | Synopsis |
+|---------|-----|----------|
+| [Ch #] | [Simon/Gene/Jacob] | [Brief summary] |
+
+## 5. Character Dossier
+
+### [Character Name]
+
+- **Role**: [Protagonist/Antagonist/etc.]
+- **Goal**: [What they want]
+- **Flaw**: [Their weakness]
+- **Secret**: [Hidden truth]
+- **Arc**: [How they change]
+
+## 6. Timeline & Continuity
+
+| Event | Timing | Location |
+|-------|--------|----------|
+| [Event] | [When] | [Where] |
+
+### Continuity Locks
+
+- [Critical facts that must stay consistent]
+
+## 7. Themes, Tone & POV
+
+### Themes
+
+- **Theme Name** — Brief explanation
+
+### Tone
+
+- [Restrained, atmospheric, etc.]
+
+### POV & Tense
+
+- [First-person present, etc.]
+
+## 8. Problems to Fix (Ranked)
+
+1. **[Problem]**: [Description and fix]
+
+## 9. Rewrite Strategy (3 Passes)
+
+### Pass 1 – Structure
+
+- [Structural changes needed]
+
+### Pass 2 – Character & POV
+
+- [Character arc adjustments]
+
+### Pass 3 – Line & Tone
+
+- [Style refinements]
 
 Constraints:
 - If info is missing, write UNKNOWN instead of guessing.
@@ -72,3 +155,35 @@ RULES:
 FULL CHAPTER TEXT TO EXPAND:
 {chapter_excerpts}
 """
+
+EDIT_SYSTEM = """You are a surgical editor who makes precise changes to chapter drafts.
+
+Your approach:
+1. Read the original text and the requested edit
+2. Apply the edit exactly as specified
+3. Maintain the author's voice and style
+4. Ensure continuity with surrounding chapters
+5. Output ONLY the edited chapter text
+
+Be precise. Make the requested change and nothing else unless it breaks continuity."""
+
+EDIT_USER_TEMPLATE = """BOOK BIBLE (global constraints):
+{book_bible}
+
+ORIGINAL CHAPTER:
+{original_chapter}
+
+EDIT REQUEST:
+{edit_request}
+
+TASK:
+Apply the above edit request to the original chapter. Preserve the author's voice, maintain continuity with the book bible, and output ONLY the edited chapter text in markdown format with ## heading.
+
+RULES:
+- Apply the edit exactly as specified
+- Maintain narrative consistency
+- Preserve the chapter structure and length
+- Do NOT use em-dashes (—) or contractions
+- Use proper markdown formatting
+
+OUTPUT ONLY THE EDITED CHAPTER:"""
