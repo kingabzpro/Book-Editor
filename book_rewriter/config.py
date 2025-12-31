@@ -12,6 +12,13 @@ class Settings:
 
     index_dir: str
 
+    # Multi-turn rewrite settings
+    sambanova_api_key: str = ""
+    sambanova_base_url: str = "https://api.sambanova.ai/v1"
+    sambanova_model: str = "gpt-oss-120b"
+    kimi_instruct_model: str = "moonshotai/Kimi-K2-Instruct"
+    kimi_thinking_model: str = "moonshotai/Kimi-K2-Thinking"
+
     chunk_char_target: int = 1200
     chunk_char_overlap: int = 180
     top_k: int = 10
@@ -26,4 +33,11 @@ def load_settings() -> Settings:
         mistral_embed_model=os.environ.get("MISTRAL_EMBED_MODEL", "mistral-embed").strip(),
 
         index_dir=os.environ.get("INDEX_DIR", "local_index").strip(),
+
+        # Multi-turn rewrite settings
+        sambanova_api_key=os.environ.get("SAMBANOVA_API_KEY", "").strip(),
+        sambanova_base_url=os.environ.get("SAMBANOVA_BASE_URL", "https://api.sambanova.ai/v1").strip(),
+        sambanova_model=os.environ.get("SAMBANOVA_MODEL", "gpt-oss-120b").strip(),
+        kimi_instruct_model=os.environ.get("KIMI_INSTRUCT_MODEL", "moonshotai/Kimi-K2-Instruct").strip(),
+        kimi_thinking_model=os.environ.get("KIMI_THINKING_MODEL", "moonshotai/Kimi-K2-Thinking").strip(),
     )

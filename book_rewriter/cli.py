@@ -11,9 +11,12 @@ from .pipeline import (
     index_book,
     create_book_bible,
     rewrite_chapter,
+    rewrite_chapter_batch,
     edit_chapter,
     retrieve,
     export_chapter_text,
+    rewrite_chapter_multiturn,
+    rewrite_chapter_multiturn_batch,
 )
 
 console = Console()
@@ -35,6 +38,18 @@ def _check_env(s):
         missing.append("MISTRAL_API_KEY")
     if missing:
         raise SystemExit(f"Missing env vars: {', '.join(missing)} (see .env.example)")
+
+def _check_multiturn_env(s):
+    """Check for additional env vars needed for multi-turn rewrite."""
+    missing = []
+    if not s.sambanova_api_key:
+        missing.append("SAMBANOVA_API_KEY")
+    if not s.nebius_api_key:
+        missing.append("NEBIUS_API_KEY")
+    if not s.mistral_api_key:
+        missing.append("MISTRAL_API_KEY")
+    if missing:
+        raise SystemExit(f"Missing env vars for multi-turn rewrite: {', '.join(missing)}")
 
 def main():
     load_dotenv()  # loads .env if present
@@ -58,6 +73,13 @@ def main():
     p_rewrite.add_argument("--out", default="")
     p_rewrite.add_argument("--docx", default="")
 
+    p_rewrite_batch = sub.add_parser("rewrite-batch", help="Rewrite multiple chapters in sequence (single-turn)")
+    p_rewrite_batch.add_argument("start_idx", type=int, help="First chapter number (1-based)")
+    p_rewrite_batch.add_argument("end_idx", type=int, help="Last chapter number (1-based, inclusive)")
+    p_rewrite_batch.add_argument("--bible", default="book_bible.md", help="Path to book bible")
+    p_rewrite_batch.add_argument("--docx", default="", help="Path to source DOCX")
+    p_rewrite_batch.add_argument("--rewrites-dir", default="rewrites", help="Directory for rewritten chapters")
+
     p_search = sub.add_parser("search", help="Search index with a query")
     p_search.add_argument("query")
     p_search.add_argument("--k", type=int, default=10)
@@ -71,6 +93,23 @@ def main():
     p_edit.add_argument("request", help="Edit request (e.g., 'add more sensory detail', 'slow down pacing', 'include Jacob POV')")
     p_edit.add_argument("--bible", default="book_bible.md", help="Path to book bible")
     p_edit.add_argument("--out", default="", help="Output path (default: overwrite original)")
+
+    # Multi-turn rewrite commands
+    p_multiturn = sub.add_parser("multiturn", help="Rewrite chapter using 3-turn pipeline (SambaNova -> Kimi-Instruct -> Kimi-Thinking)")
+    p_multiturn.add_argument("chapter_idx", type=int, help="Chapter number (1-based)")
+    p_multiturn.add_argument("--bible", default="book_bible.md", help="Path to book bible")
+    p_multiturn.add_argument("--out", default="", help="Output path (default: rewrites/chapter_XX.md)")
+    p_multiturn.add_argument("--docx", default="", help="Path to source DOCX")
+    p_multiturn.add_argument("--rewrites-dir", default="rewrites", help="Directory containing previous rewritten chapters")
+    p_multiturn.add_argument("--save-intermediate", action="store_true", help="Save intermediate turn outputs (turn1, turn2)")
+
+    p_multiturn_batch = sub.add_parser("multiturn-batch", help="Rewrite multiple chapters in sequence using 3-turn pipeline")
+    p_multiturn_batch.add_argument("start_idx", type=int, help="First chapter number (1-based)")
+    p_multiturn_batch.add_argument("end_idx", type=int, help="Last chapter number (1-based, inclusive)")
+    p_multiturn_batch.add_argument("--bible", default="book_bible.md", help="Path to book bible")
+    p_multiturn_batch.add_argument("--docx", default="", help="Path to source DOCX")
+    p_multiturn_batch.add_argument("--rewrites-dir", default="rewrites", help="Directory for rewritten chapters")
+    p_multiturn_batch.add_argument("--save-intermediate", action="store_true", help="Save intermediate turn outputs")
 
     args = p.parse_args()
 
@@ -97,6 +136,23 @@ def main():
         out = rewrite_chapter(chapter_idx, s, book_bible_path=args.bible, out_path=args.out, docx_path=docx_path)
         log.info(f"Rewrite written to: {out}")
         console.print("[green]OK[/green] Rewrite complete.")
+
+    elif args.cmd == "rewrite-batch":
+        # Convert 1-based chapter numbers to 0-based indices
+        start_idx = args.start_idx - 1
+        end_idx = args.end_idx - 1
+        log.info(f"Single-turn batch: chapters {args.start_idx} to {args.end_idx}...")
+        docx_path = args.docx if args.docx else None
+        output_paths = rewrite_chapter_batch(
+            start_idx=start_idx,
+            end_idx=end_idx,
+            s=s,
+            book_bible_path=args.bible,
+            docx_path=docx_path,
+            rewrites_dir=args.rewrites_dir,
+        )
+        log.info(f"Batch complete: {len(output_paths)} chapters rewritten")
+        console.print(f"[green]OK[/green] Batch complete: {len(output_paths)} chapters rewritten.")
 
     elif args.cmd == "search":
         log.info(f"Searching for: '{args.query}' (k={args.k})")
@@ -137,6 +193,45 @@ def main():
         )
         log.info(f"Edited chapter saved to: {out}")
         console.print("[green]OK[/green] Chapter edited.")
+
+    elif args.cmd == "multiturn":
+        _check_multiturn_env(s)
+        # Convert 1-based chapter number to 0-based index
+        chapter_idx = args.chapter_idx - 1
+        log.info(f"Multi-turn rewrite: chapter {args.chapter_idx} (index {chapter_idx})...")
+        log.info("Using 3-turn pipeline: SambaNova (grammar) -> Kimi-Instruct (gaps/dialogue) -> Kimi-Thinking (final)")
+        docx_path = args.docx if args.docx else None
+        out = rewrite_chapter_multiturn(
+            chapter_idx=chapter_idx,
+            s=s,
+            book_bible_path=args.bible,
+            out_path=args.out,
+            docx_path=docx_path,
+            rewrites_dir=args.rewrites_dir,
+            save_intermediate=args.save_intermediate,
+        )
+        log.info(f"Multi-turn rewrite written to: {out}")
+        console.print("[green]OK[/green] Multi-turn rewrite complete.")
+
+    elif args.cmd == "multiturn-batch":
+        _check_multiturn_env(s)
+        # Convert 1-based chapter numbers to 0-based indices
+        start_idx = args.start_idx - 1
+        end_idx = args.end_idx - 1
+        log.info(f"Multi-turn batch: chapters {args.start_idx} to {args.end_idx}...")
+        log.info("Using 3-turn pipeline: SambaNova (grammar) -> Kimi-Instruct (gaps/dialogue) -> Kimi-Thinking (final)")
+        docx_path = args.docx if args.docx else None
+        output_paths = rewrite_chapter_multiturn_batch(
+            start_idx=start_idx,
+            end_idx=end_idx,
+            s=s,
+            book_bible_path=args.bible,
+            docx_path=docx_path,
+            rewrites_dir=args.rewrites_dir,
+            save_intermediate=args.save_intermediate,
+        )
+        log.info(f"Batch complete: {len(output_paths)} chapters rewritten")
+        console.print(f"[green]OK[/green] Batch complete: {len(output_paths)} chapters rewritten.")
 
 if __name__ == "__main__":
     main()
