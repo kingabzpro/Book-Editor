@@ -284,3 +284,121 @@ def edit_chapter(
 
     log.info(f"Edited chapter saved to: {out_path}")
     return out_path
+
+def batch_rewrite_chapters(
+    start_chapter: int,
+    end_chapter: int,
+    s: Settings,
+    book_bible_path: str = "book_bible.md",
+    docx_path: str | None = None,
+    out_dir: str = "rewrites",
+) -> List[str]:
+    """
+    Rewrite multiple chapters in batch from start_chapter to end_chapter (inclusive).
+
+    Args:
+        start_chapter: Starting chapter number (1-based, e.g., 1 for Chapter 1)
+        end_chapter: Ending chapter number (1-based, inclusive)
+        s: Settings object
+        book_bible_path: Path to the book bible file
+        docx_path: Path to the DOCX file (optional, will auto-detect if not provided)
+        out_dir: Output directory for rewritten chapters
+
+    Returns:
+        List of output file paths for the rewritten chapters
+    """
+    log.info(f"Batch rewriting chapters {start_chapter} to {end_chapter}...")
+
+    # Convert 1-based to 0-based indices
+    start_idx = start_chapter - 1
+    end_idx = end_chapter - 1
+
+    # Validate range
+    if start_idx < 0 or end_idx < start_idx:
+        raise ValueError(f"Invalid chapter range: {start_chapter} to {end_chapter}")
+
+    # Find DOCX path
+    if not docx_path:
+        import glob
+        docx_files = glob.glob("Book/*.docx")
+        if not docx_files:
+            raise ValueError("No DOCX file found. Please specify docx_path or place .docx in Book/")
+        docx_path = docx_files[0]
+        log.info(f"Using DOCX: {docx_path}")
+
+    # Get all chapters to validate the range
+    all_chapters = export_chapter_text(docx_path, s)
+    max_chapter = len(all_chapters)
+
+    if end_idx >= max_chapter:
+        raise ValueError(f"End chapter {end_chapter} exceeds available chapters ({max_chapter})")
+
+    # Load bible once
+    log.info(f"Loading book bible from: {book_bible_path}")
+    with open(book_bible_path, "r", encoding="utf-8") as f:
+        bible = f.read()
+
+    output_paths = []
+
+    # Rewrite each chapter in sequence
+    for chapter_idx in range(start_idx, end_idx + 1):
+        chapter_num = chapter_idx + 1  # Convert back to 1-based for display
+        log.info(f"Rewriting chapter {chapter_num}/{end_chapter} (index {chapter_idx})...")
+
+        target_ch = all_chapters[chapter_idx]
+        chapter_title = target_ch["title"]
+        full_text = target_ch["text"]
+        log.info(f"Chapter {chapter_num} has {len(full_text)} characters")
+
+        # Get nearby chapter context for continuity (from vector store)
+        log.info(f"Retrieving context from nearby chapters...")
+        nearby_hits = []
+        for offset in [-1, 0, 1]:
+            ch = chapter_idx + offset
+            if ch >= 0 and ch < max_chapter:
+                for hit in retrieve(f"chapter {ch} plot events", s, k=5):
+                    if int(hit["chapter_idx"]) == ch:
+                        nearby_hits.append(hit)
+
+        nearby_excerpts = []
+        for h in nearby_hits[:8]:
+            nearby_excerpts.append(
+                f"[Chapter {h['chapter_idx']} context]\n{h['text'][:500]}\n"
+            )
+
+        chapter_excerpts = f"""FULL CHAPTER TEXT TO REWRITE (Chapter {chapter_idx}: {chapter_title}):
+
+{full_text}
+
+CONTINUITY CONTEXT FROM NEARBY CHAPTERS:
+{"".join(nearby_excerpts)}
+"""
+
+        user_prompt = REWRITE_USER_TEMPLATE.format(
+            book_bible=bible,
+            chapter_title=chapter_title,
+            chapter_excerpts=chapter_excerpts,
+        )
+
+        log.info("Sending to LLM for chapter rewrite...")
+        rewritten = kimi_chat(
+            api_key=s.nebius_api_key,
+            base_url=s.nebius_base_url,
+            model=s.kimi_model,
+            system_prompt=REWRITE_SYSTEM,
+            user_text=user_prompt,
+            temperature=0.5,
+        )
+
+        # Generate output path preserving original chapter index
+        out_path = f"{out_dir}/chapter_{chapter_idx:02d}.md"
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(rewritten)
+
+        output_paths.append(out_path)
+        log.info(f"Chapter {chapter_num} rewrite saved to: {out_path}")
+
+    log.info(f"Batch rewrite complete: {len(output_paths)} chapters processed")
+    return output_paths

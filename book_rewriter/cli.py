@@ -12,6 +12,7 @@ from .pipeline import (
     create_book_bible,
     rewrite_chapter,
     edit_chapter,
+    batch_rewrite_chapters,
     retrieve,
     export_chapter_text,
 )
@@ -71,6 +72,13 @@ def main():
     p_edit.add_argument("request", help="Edit request (e.g., 'add more sensory detail', 'slow down pacing', 'include Jacob POV')")
     p_edit.add_argument("--bible", default="book_bible.md", help="Path to book bible")
     p_edit.add_argument("--out", default="", help="Output path (default: overwrite original)")
+
+    p_batch = sub.add_parser("batch-rewrite", help="Rewrite multiple chapters in batch")
+    p_batch.add_argument("start", type=int, help="Starting chapter number (1-based)")
+    p_batch.add_argument("end", type=int, help="Ending chapter number (1-based, inclusive)")
+    p_batch.add_argument("--bible", default="book_bible.md", help="Path to book bible")
+    p_batch.add_argument("--docx", default="", help="Path to DOCX file")
+    p_batch.add_argument("--out-dir", default="rewrites", help="Output directory (default: rewrites)")
 
     args = p.parse_args()
 
@@ -137,6 +145,22 @@ def main():
         )
         log.info(f"Edited chapter saved to: {out}")
         console.print("[green]OK[/green] Chapter edited.")
+
+    elif args.cmd == "batch-rewrite":
+        log.info(f"Batch rewriting chapters {args.start} to {args.end}...")
+        docx_path = args.docx if args.docx else None
+        output_paths = batch_rewrite_chapters(
+            start_chapter=args.start,
+            end_chapter=args.end,
+            s=s,
+            book_bible_path=args.bible,
+            docx_path=docx_path,
+            out_dir=args.out_dir,
+        )
+        log.info(f"Batch rewrite complete: {len(output_paths)} chapters rewritten")
+        for path in output_paths:
+            log.info(f"  - {path}")
+        console.print(f"[green]OK[/green] Batch rewrite complete ({len(output_paths)} chapters).")
 
 if __name__ == "__main__":
     main()
