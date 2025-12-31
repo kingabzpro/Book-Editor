@@ -227,36 +227,41 @@ def rewrite_chapter(
             docx_path = docx_files[0]
             log.info(f"Using DOCX: {docx_path}")
 
-    # Get FULL chapter text from vector store metadata (much faster than DOCX)
-    log.info(f"Loading chapters from vector store metadata...")
-    try:
-        all_chapters = _load_chapters_from_metadata(s)
-        log.info(f"Loaded {len(all_chapters)} chapters from metadata")
-    except FileNotFoundError:
-        # Fallback to DOCX if metadata not found
-        if not docx_path:
-            raise ValueError("No vector store metadata found. Please run 'index' command first.")
-        log.info(f"Metadata not found, falling back to DOCX: {docx_path}")
-        all_chapters = export_chapter_text(docx_path, s)
+    # Get FULL chapter text from DOCX (not chunks)
+    log.info(f"Getting full chapter {chapter_idx} text from DOCX...")
+    all_chapters = export_chapter_text(docx_path, s)
 
     # Find the target chapter
     target_ch = next((ch for ch in all_chapters if ch["chapter_idx"] == chapter_idx), None)
     if not target_ch:
-        raise ValueError(f"Chapter {chapter_idx} not found")
+        raise ValueError(f"Chapter {chapter_idx} not found in DOCX")
 
     chapter_title = target_ch["title"]
     full_text = target_ch["text"]
-    log.info(f"Chapter {chapter_idx}: {chapter_title} ({len(full_text)} characters)")
+    log.info(f"Chapter {chapter_idx} has {len(full_text)} characters")
 
-    # Get previous rewritten chapter for continuity
-    previous_rewritten = _load_previous_chapters("rewrites", chapter_idx, count=1)
+    # Get nearby chapter context for continuity (from vector store)
+    log.info(f"Retrieving context from nearby chapters...")
+    nearby_hits = []
+    for offset in [-1, 0, 1]:
+        ch = chapter_idx + offset
+        if ch >= 0:
+            for hit in retrieve(f"chapter {ch} plot events", s, k=5):
+                if int(hit["chapter_idx"]) == ch:
+                    nearby_hits.append(hit)
+
+    nearby_excerpts = []
+    for h in nearby_hits[:8]:
+        nearby_excerpts.append(
+            f"[Chapter {h['chapter_idx']} context]\n{h['text'][:500]}\n"
+        )
 
     chapter_excerpts = f"""FULL CHAPTER TEXT TO REWRITE (Chapter {chapter_idx}: {chapter_title}):
 
 {full_text}
 
-PREVIOUS REWRITTEN CHAPTER (for continuity):
-{previous_rewritten}
+CONTINUITY CONTEXT FROM NEARBY CHAPTERS:
+{"".join(nearby_excerpts)}
 """
 
     user_prompt = REWRITE_USER_TEMPLATE.format(
