@@ -4,6 +4,7 @@ from .pipeline import (
     rewrite_chapter,
     edit_chapter,
     batch_rewrite_chapters,
+    rewrite_all_chapters,
     retrieve,
     export_chapter_text,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "rewrite_chapter",
     "edit_chapter",
     "batch_rewrite_chapters",
+    "rewrite_all_chapters",
     "retrieve",
     "export_chapter_text",
 ]

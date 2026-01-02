@@ -13,6 +13,7 @@ from .pipeline import (
     rewrite_chapter,
     edit_chapter,
     batch_rewrite_chapters,
+    rewrite_all_chapters,
     retrieve,
     export_chapter_text,
 )
@@ -79,6 +80,12 @@ def main():
     p_batch.add_argument("--bible", default="book_bible.md", help="Path to book bible")
     p_batch.add_argument("--docx", default="", help="Path to DOCX file")
     p_batch.add_argument("--out-dir", default="rewrites", help="Output directory (default: rewrites)")
+
+    p_rewrite_all = sub.add_parser("rewrite-all", help="Rewrite all chapters at once (single-turn or multi-turn)")
+    p_rewrite_all.add_argument("--bible", default="book_bible.md", help="Path to book bible")
+    p_rewrite_all.add_argument("--docx", default="", help="Path to DOCX file")
+    p_rewrite_all.add_argument("--out-dir", default="rewrites", help="Output directory (default: rewrites)")
+    p_rewrite_all.add_argument("--turns", type=int, default=1, help="Number of rewrite passes (default: 1, use >1 for multi-turn refinement)")
 
     args = p.parse_args()
 
@@ -161,6 +168,22 @@ def main():
         for path in output_paths:
             log.info(f"  - {path}")
         console.print(f"[green]OK[/green] Batch rewrite complete ({len(output_paths)} chapters).")
+
+    elif args.cmd == "rewrite-all":
+        log.info(f"Rewriting ALL chapters with {args.turns} turn(s)...")
+        docx_path = args.docx if args.docx else None
+        result = rewrite_all_chapters(
+            s=s,
+            book_bible_path=args.bible,
+            docx_path=docx_path,
+            out_dir=args.out_dir,
+            turns=args.turns,
+        )
+        log.info(f"All chapters rewritten: {result['total_chapters']} chapters, {result['turns']} turn(s)")
+        if args.turns > 1:
+            for turn_num, paths in result['output_paths'].items():
+                log.info(f"  {turn_num}: {len(paths)} chapters")
+        console.print(f"[green]OK[/green] All chapters rewritten ({result['total_chapters']} chapters, {args.turns} turn(s)).")
 
 if __name__ == "__main__":
     main()
