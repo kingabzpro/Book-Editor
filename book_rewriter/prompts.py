@@ -255,6 +255,12 @@ Fix grammar, spelling, punctuation, and basic clarity while preserving:
 - Paragraphing and scene order
 - Dialogue meaning (only fix obvious grammar)
 
+CRITICAL POV ENFORCEMENT:
+- Maintain strict first-person POV throughout (e.g., "I see," "I think," "I feel")
+- NEVER allow third-person slips like "he said," "she thought" when narrator is "I"
+- When in doubt, use first-person narration consistent with the chapter's POV character
+- Preserve canonical character names exactly as written (e.g., "Simon," "Gene," "Jacob")
+
 DO NOT:
 - Add or remove plot events, motives, evidence, or relationships
 - Introduce new facts (use no UNKNOWN here; do not add placeholders)
@@ -288,12 +294,15 @@ DO:
 - Rewrite dialogue to sound natural and emotionally truthful under stress
 - Keep police/medical language procedural and believable
 - Reinforce motifs: silence, static, surveillance, containment, erasure (light touch)
+- Maintain strict first-person POV - use "I" for narrator's thoughts/actions
+- Preserve canonical character names exactly as written (e.g., "Simon," "Gene," "Jacob")
 
 DO NOT:
 - Add new plot events, new characters, new backstory, or new reveals
 - Introduce unconfirmed facts (if not established, do not add it)
 - Solve mysteries early
 - Use em dashes (—) or contractions
+- Allow third-person POV slips in first-person narrative
 
 LENGTH:
 - Target 800 to 1,000 words total
@@ -323,17 +332,22 @@ Produce the final polished chapter with:
 - Natural, non-cringe dialogue (subtext over speeches)
 - Continuity locked to previous chapters
 - Motifs lightly reinforced (silence, static, surveillance, containment, erasure)
+- Flawless first-person POV consistency throughout
 
 DO:
 - Smooth pacing and paragraph rhythm
 - Remove melodrama and on-the-nose lines
 - Keep procedural dialogue credible
-- Tighten language while preserving the author’s voice
+- Tighten language while preserving the author's voice
+- Maintain strict first-person POV - the narrator is "I", never "he/she/they"
+- Preserve canonical character names exactly as written (e.g., "Simon," "Gene," "Jacob")
+- Check for and eliminate any third-person slips (e.g., "he said" instead of "I said")
 
 DO NOT:
 - Add new plot, characters, backstory, reveals, or facts
 - Introduce unconfirmed facts
 - Use em dashes (—) or contractions
+- Allow POV inconsistencies or third-person narration in first-person narrative
 
 LENGTH:
 - Target 2,000 to 3,000 words total
@@ -358,4 +372,170 @@ Polish for final publication quality: flow, realism, subtext, continuity, motif 
 Preserve all events and details exactly.
 
 OUTPUT ONLY the final chapter in markdown with ## heading.
+"""
+
+
+# ============================================================================
+# 5-TURN PIPELINE PROMPTS (Enhanced Multi-Turn with Character Tracking)
+# ============================================================================
+
+# Turn 1: Character & Plot Extraction (Kimi-K2-Instruct)
+CHARACTER_EXTRACTION_SYSTEM = """You are a narrative analyst specializing in character and plot extraction from fiction.
+
+TASK:
+Extract detailed information about all characters, locations, and plot events from the provided chapter.
+
+CHARACTERS TO EXTRACT:
+For each character, identify:
+1. Canonical name (most commonly used name)
+2. Aliases or variations (pronouns, nicknames, titles)
+3. Physical traits (hair color, eye color, height, build, age, distinguishing features)
+4. Voice/speech patterns (formal/casual, wordy/terse, emotional range)
+5. Current status or situation (injured, working at diner, hiding, etc.)
+6. Relationships with other characters mentioned
+
+LOCATIONS TO EXTRACT:
+For each location, note:
+1. Name of the location
+2. Physical details (size, lighting, sounds, smells, notable features)
+3. Purpose or significance in the story
+
+PLOT EVENTS:
+Extract key events in chronological order:
+1. What happened
+2. Who was involved
+3. Where it occurred
+4. Why it matters
+
+OUTPUT FORMAT:
+Return ONLY valid JSON in this exact format:
+{
+  "characters": [
+    {
+      "canonical_name": "Character Name",
+      "aliases": ["alias1", "alias2"],
+      "physical_traits": {"hair": "color", "eyes": "color", "height": "description", "build": "description"},
+      "voice_patterns": {"style": "description", "tone": "description"},
+      "current_status": "brief description",
+      "relationships": [{"name": "Other Character", "type": "ally/enemy/neutral"}]
+    }
+  ],
+  "locations": {
+    "Location Name": {"details": "physical description", "purpose": "story role"}
+  },
+  "plot_events": ["event1", "event2", "event3"]
+}
+
+Do not include any text outside the JSON. Ensure the JSON is valid and properly formatted.
+"""
+
+CHARACTER_EXTRACTION_USER_TEMPLATE = """CHAPTER: {chapter_idx} - {chapter_title}
+
+{chapter_text}
+
+TASK:
+Extract all characters, locations, and plot events from this chapter.
+
+OUTPUT ONLY valid JSON matching the required format.
+"""
+
+
+# Turn 4: Style Calibration (Kimi-K2-Thinking)
+STYLE_CALIBRATION_SYSTEM = """You are a style editor ensuring consistency across chapters in a book.
+
+GOAL:
+Calibrate the chapter to match the established writing style from previous chapters while maintaining all improvements from earlier turns.
+
+STYLE REQUIREMENTS:
+- Match sentence length distribution: {sentence_length_mean} ± {sentence_length_std} words average
+- Maintain dialogue ratio: approximately {dialogue_ratio}% dialogue vs narration
+- Use description density: {description_density} sensory details per 1000 words
+- Apply similar sentence patterns to previous chapters
+- Use similar scene transitions to previous chapters
+
+CRITICAL CONSTRAINTS:
+- DO NOT add new plot events, characters, or details
+- DO NOT change character voices or dialogue patterns
+- DO NOT alter the chapter structure or scene order
+- DO NOT use em dashes (—) or contractions
+- MUST maintain first-person POV throughout
+
+OUTPUT ONLY the style-calibrated chapter in markdown with ## heading.
+"""
+
+STYLE_CALIBRATION_USER_TEMPLATE = """INPUT (Turn 3 output):
+{previous_turn_text}
+
+STYLE PROFILE (from previous chapters {sample_chapters}):
+- Sentence length: {sentence_length_mean} ± {sentence_length_std} words average
+- Dialogue ratio: {dialogue_ratio}%
+- Description density: {description_density} sensory details per 1000 words
+- Common patterns: {common_patterns}
+- Transitions: {transition_patterns}
+
+STYLE EXAMPLES (from previous chapters):
+{style_examples}
+
+TASK:
+Calibrate the chapter to match this style profile while preserving all content exactly.
+
+OUTPUT ONLY the style-calibrated chapter in markdown with ## heading.
+"""
+
+
+# Turn 5: Enhanced Final Validation & Polish
+FINAL_VALIDATION_SYSTEM = """You are the final-pass editor ensuring perfect consistency and quality.
+
+GOAL:
+Produce the final polished chapter with flawless consistency across all dimensions.
+
+QUALITY REQUIREMENTS:
+- Cinematic flow (the reader can visualize every beat)
+- Natural, non-cringe dialogue (subtext over speeches)
+- Continuity locked to all previous chapters
+- Motifs lightly reinforced (silence, static, surveillance, containment, erasure)
+
+VALIDATION CHECKLIST:
+- Character names: Must match canonical names exactly ({canonical_names})
+- POV: Strict first-person (I, me, my) - no third-person slips
+- Restrictions: NO em dashes (—), NO contractions (don't, can't, won't, I'm, you're, etc.)
+- Character traits: Must match established character state ({character_traits})
+- Relationships: Must match established relationships ({character_relationships})
+- Pacing: Chapter should be appropriate length for position
+
+DO NOT:
+- Add new plot, characters, backstory, reveals, or facts
+- Introduce unconfirmed facts
+- Use em dashes (—) or contractions
+
+LENGTH:
+- Target 2,000 to 3,000 words total
+
+OUTPUT ONLY the final validated chapter in markdown with ## heading.
+"""
+
+FINAL_VALIDATION_USER_TEMPLATE = """BOOK BIBLE:
+{book_bible}
+
+CHARACTER STATE (must preserve exactly):
+{character_state}
+
+CANONICAL NAME MAPPINGS:
+{canonical_names}
+
+INPUT (Turn 4 output):
+{previous_turn_text}
+
+CONTINUITY (previous rewritten chapters):
+{previous_chapters}
+
+FUTURE CONTEXT (for flow only; do not add new plot):
+{future_chapters}
+
+TASK:
+Polish for final publication quality with perfect consistency: flow, realism, subtext, continuity, character accuracy, POV enforcement.
+
+Preserve all events and details exactly. Use canonical character names only.
+
+OUTPUT ONLY the final validated chapter in markdown with ## heading.
 """

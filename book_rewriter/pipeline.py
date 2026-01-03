@@ -541,8 +541,8 @@ def rewrite_chapter_multiturn(
     Multi-turn rewrite using 3 different models for progressive improvement.
 
     Turn 1 (SambaNova gpt-oss-120b): Grammar baseline
-    Turn 2 (Kimi-K2-Instruct): Fill gaps with previous rewritten chapters
-    Turn 3 (Kimi-K2-Thinking): Final draft with book bible + 1 previous rewritten + 1 future from DOCX
+    Turn 2 (Kimi-K2-Instruct): Fill gaps with up to 3 previous rewritten chapters
+    Turn 3 (Kimi-K2-Thinking): Final draft with book bible + 3 previous rewritten + 2 future from DOCX
 
     Args:
         chapter_idx: Index of chapter to rewrite (0-based)
@@ -587,12 +587,12 @@ def rewrite_chapter_multiturn(
     original_text = target_ch["text"]
     log.info(f"Chapter {chapter_idx}: {chapter_title} ({len(original_text)} characters)")
 
-    # Load previous rewritten chapters (for turns 2 and 3)
-    previous_rewritten = _load_previous_chapters(rewrites_dir, chapter_idx, count=1)
-    log.info(f"Loaded {previous_rewritten.count('PREVIOUS CHAPTER')} previous rewritten chapter")
+    # Load previous rewritten chapters (for turns 2 and 3) - EXPANDED from 1 to 3
+    previous_rewritten = _load_previous_chapters(rewrites_dir, chapter_idx, count=3)
+    log.info(f"Loaded {previous_rewritten.count('PREVIOUS CHAPTER')} previous rewritten chapters")
 
-    # Get future chapter from DOCX (for turn 3)
-    future_chapter = _get_future_chapter_from_docx(chapter_idx, docx_path, s, count=1)
+    # Get future chapters from DOCX (for turn 3) - EXPANDED from 1 to 2
+    future_chapter = _get_future_chapter_from_docx(chapter_idx, docx_path, s, count=2)
     log.info(f"Loaded future chapter context ({len(future_chapter)} characters)")
 
     current_text = original_text
@@ -635,11 +635,11 @@ def rewrite_chapter_multiturn(
         log.info(f"Saved Turn 1 output to: {intermediate_path}")
 
     # ========================================================================
-    # TURN 2: Fill Gaps & Improve Dialogue (Kimi-K2-Instruct)
-    # Context: Previous rewritten chapters
+    # TURN 2: Fill Gaps & Improve Dialogue (SambaNova gpt-oss-120b)
+    # Context: Up to 3 previous rewritten chapters
     # ========================================================================
     log.info("-" * 60)
-    log.info("TURN 2: Fill Gaps & Improve Dialogue (Kimi-K2-Instruct) - Previous rewritten chapter")
+    log.info("TURN 2: Fill Gaps & Improve Dialogue (SambaNova gpt-oss-120b) - Up to 3 Previous chapters")
     log.info("-" * 60)
 
     turn2_prompt = FILL_GAPS_USER_TEMPLATE.format(
@@ -647,13 +647,14 @@ def rewrite_chapter_multiturn(
         previous_chapters=previous_rewritten,
     )
 
-    turn2_result = kimi_chat(
-        api_key=s.nebius_api_key,
-        base_url=s.nebius_base_url,
-        model=s.kimi_instruct_model,
+    turn2_result = sambanova_chat_simple(
+        api_key=s.sambanova_api_key,
+        base_url=s.sambanova_base_url,
+        model=s.sambanova_model,
         system_prompt=FILL_GAPS_SYSTEM,
         user_text=turn2_prompt,
-        temperature=0.4,
+        temperature=0.3,
+        top_p=0.9,
     )
 
     current_text = turn2_result
@@ -668,10 +669,10 @@ def rewrite_chapter_multiturn(
 
     # ========================================================================
     # TURN 3: Final Draft with Improved Flow (Kimi-K2-Thinking)
-    # Context: Book bible + 1 previous rewritten chapter + 1 future chapter from DOCX
+    # Context: Book bible + 3 previous rewritten chapters + 2 future chapters from DOCX
     # ========================================================================
     log.info("-" * 60)
-    log.info("TURN 3: Final Draft (Kimi-K2-Thinking) - Book bible + Previous + Future")
+    log.info("TURN 3: Final Draft (Kimi-K2-Thinking) - Book bible + 3 Previous + 2 Future")
     log.info("-" * 60)
 
     # Load book bible for turn 3 only
