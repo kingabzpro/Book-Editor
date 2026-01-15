@@ -37,6 +37,7 @@ Core pipeline:
 python -m book_rewriter.cli index "<docx_path>" --book "<book_name>"
 python -m book_rewriter.cli bible --docx "<docx_path>" --book "<book_name>"
 python -m book_rewriter.cli bible-enhanced --docx "<docx_path>" --book "<book_name>"
+python -m book_rewriter.cli export-chapters "<docx_path>" --out chapters.json
 python -m book_rewriter.cli search "<query>"
 ```
 
@@ -52,6 +53,7 @@ Multi-turn rewrite (SambaNova required):
 python -m book_rewriter.cli multiturn 3 --book "<book_name>"
 python -m book_rewriter.cli multiturn-batch 1 10 --book "<book_name>" --resume --save-intermediate
 python -m book_rewriter.cli multiturn-full --book "<book_name>" --resume --save-intermediate
+python -m book_rewriter.cli multiturn-pro 3 --book "<book_name>" --bible "books/<book_name>/metadata/book_bible_enhanced.md"
 ```
 
 Analysis and utilities:
@@ -66,3 +68,4 @@ python -m book_rewriter.cli edit "books/<book_name>/rewrites/chapter_03.md" "add
 Notes:
 - Chapters are 1-based for `rewrite`, `rewrite-batch`.
 - `--resume` uses a progress file and continues from the last completed chapter.
+- `multiturn-pro` uses `book_bible_enhanced.md` and the character ledger.

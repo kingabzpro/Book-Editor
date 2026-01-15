@@ -1109,18 +1109,6 @@ def main():
         """Generate enhanced Book Bible with character registry."""
         log.info("Generating enhanced Book Bible with character registry...")
 
-        # Check if character ledger exists
-        if os.path.exists(args.character_ledger):
-            ledger = load_ledger(args.character_ledger)
-            log.info(
-                f"Loaded character ledger with {len(ledger.characters)} characters"
-            )
-        else:
-            log.warning(f"Character ledger not found at {args.character_ledger}")
-            log.warning("Run 'extract-chars' first to populate the ledger")
-            ledger = CharacterLedger()
-
-        # Create enhanced bible content
         docx_path = args.docx if args.docx else None
         if book:
             if not docx_path:
@@ -1134,6 +1122,17 @@ def main():
                 )
             if args.out == "book_bible_enhanced.md":
                 args.out = str(get_book_metadata_path(book) / "book_bible_enhanced.md")
+
+        # Check if character ledger exists
+        if os.path.exists(args.character_ledger):
+            ledger = load_ledger(args.character_ledger)
+            log.info(
+                f"Loaded character ledger with {len(ledger.characters)} characters"
+            )
+        else:
+            log.warning(f"Character ledger not found at {args.character_ledger}")
+            log.warning("Run 'extract-chars' first to populate the ledger")
+            ledger = CharacterLedger()
 
         # First generate the base bible
         base_bible_path = (
