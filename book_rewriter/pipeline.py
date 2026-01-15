@@ -166,7 +166,12 @@ def export_chapter_text(docx_path: str, s: Settings) -> List[Dict[str, Any]]:
         })
     return exported
 
-def create_book_bible(s: Settings, out_path: str = "book_bible.md", docx_path: str | None = None) -> str:
+def create_book_bible(
+    s: Settings,
+    out_path: str = "book_bible.md",
+    docx_path: str | None = None,
+    book_title: str | None = None,
+) -> str:
     log.info("Creating Book Bible from chapter text...")
 
     # Need the DOCX path - try to find it from config or require it
@@ -192,7 +197,10 @@ def create_book_bible(s: Settings, out_path: str = "book_bible.md", docx_path: s
             f"---\nCHAPTER {ch['chapter_idx']}: {ch['title']}\n{text}\n"
         )
 
-    user_prompt = BOOK_BIBLE_USER_TEMPLATE.format(excerpts="".join(excerpts))
+    title_hint = f"CURRENT WORKING TITLE: {book_title}\n\n" if book_title else ""
+    user_prompt = title_hint + BOOK_BIBLE_USER_TEMPLATE.format(
+        excerpts="".join(excerpts)
+    )
     log.info("Sending to LLM for bible generation...")
     bible = kimi_chat(
         api_key=s.nebius_api_key,

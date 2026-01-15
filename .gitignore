@@ -23,7 +23,6 @@ wheels/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
-*.egg
 MANIFEST
 
 # PyInstaller
@@ -49,7 +48,6 @@ coverage.xml
 *.py.cover
 .hypothesis/
 .pytest_cache/
-cover/
 
 # Translations
 *.mo
@@ -104,7 +102,6 @@ ipython_config.py
 #   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
 #   This is especially recommended for binary packages to ensure reproducibility, and is more
 #   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
 #poetry.lock
 #poetry.toml
 
@@ -119,10 +116,10 @@ ipython_config.py
 
 # pixi
 #   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
-#pixi.lock
 #   Pixi creates a virtual environment in the .pixi directory, just like venv module creates one
 #   in the .venv directory. It is recommended not to include this directory in version control.
 .pixi
+.pixi.lock
 
 # PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
 __pypackages__/
@@ -146,9 +143,6 @@ venv.bak/
 
 # Spyder project settings
 .spyderproject
-.spyproject
-
-# Rope project settings
 .ropeproject
 
 # mkdocs documentation
@@ -185,7 +179,7 @@ cython_debug/
 #  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
 #  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
 #  and can be added to the global gitignore or merged into this file. However, if you prefer, 
-#  you could uncomment the following to ignore the entire vscode folder
+#  you could uncomment the following to ignore the entire vscode folder.
 # .vscode/
 
 # Ruff stuff:
@@ -195,7 +189,7 @@ cython_debug/
 .pypirc
 
 # Cursor
-#  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
+# Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
@@ -205,11 +199,18 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
-/Book
-/book_index
-/rewrites
+
+# Application data (git ignored - private)
+books/
+books_registry.json
+central_config.json
+*.pdf
+logs/
+
+# Book bible files (tracked - these are documentation output)
 book_bible.md
 book_bible_enhanced.md
+
+# Tools and config
+create_book_pdf.py
 .claude
-metadata
-book_validator

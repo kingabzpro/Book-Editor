@@ -12,17 +12,20 @@ TOC_LINE_RE = re.compile(
 )
 
 HEADING_STYLES = {"Heading 1", "Heading 2"}
+ALT_CHAPTER_TITLES = {"prologue", "epilogue"}
 
 def is_toc_line(text: str) -> bool:
     return bool(TOC_LINE_RE.match(text.strip()))
 
 def is_chapter_heading(style: str, text: str) -> bool:
-    if style in HEADING_STYLES:
-        # Some books use Heading 1 for the chapter title; still avoid TOC lines.
-        return not is_toc_line(text)
     if is_toc_line(text):
         return False
-    return bool(CHAPTER_HEADING_RE.match(text.strip()))
+    t = text.strip()
+    if style in HEADING_STYLES:
+        if CHAPTER_HEADING_RE.match(t):
+            return True
+        return t.lower() in ALT_CHAPTER_TITLES
+    return bool(CHAPTER_HEADING_RE.match(t))
 
 def parse_chapter_title(text: str) -> str:
     t = text.strip()
