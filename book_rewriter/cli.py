@@ -59,7 +59,7 @@ from .continuity_validator import (
     print_validation_report,
 )
 from .docx_reader import read_docx_paragraphs
-from .splitter import split_into_chapters
+from .splitter import split_into_chapters, CHAPTER_HEADING_RE, HEADING_STYLES, is_toc_line
 from .utils import join_paras
 from .kimi_client import kimi_chat
 from .sambanova_client import sambanova_chat_simple
@@ -114,6 +114,153 @@ def _check_multiturn_env(s):
         raise SystemExit(
             f"Missing env vars for multi-turn rewrite: {', '.join(missing)} (see .env.example)"
         )
+
+
+def _check_sambanova_env(s):
+    """Check for SambaNova API key."""
+    if hasattr(s, "settings"):
+        api_keys = s.settings
+    else:
+        api_keys = s
+
+    if not api_keys.sambanova_api_key:
+        raise SystemExit("Missing env var: SAMBANOVA_API_KEY (see .env.example)")
+
+
+def _build_structure_prompt(docx_path: str, max_chapters: int = 3) -> str:
+    paras = read_docx_paragraphs(docx_path)
+
+    heading_stats = {}
+    for style, txt in paras:
+        if "Heading" in style:
+            heading_stats.setdefault(style, 0)
+            heading_stats[style] += 1
+
+    chapter_markers = []
+    for idx, (style, txt) in enumerate(paras):
+        if is_toc_line(txt):
+            continue
+        if CHAPTER_HEADING_RE.match(txt.strip()):
+            chapter_markers.append((idx, style, txt.strip()))
+
+    prompt_lines = [
+        "You are analyzing a DOCX book structure.",
+        "",
+        "Heading style counts:",
+    ]
+    if heading_stats:
+        for style, count in sorted(heading_stats.items()):
+            prompt_lines.append(f"- {style}: {count}")
+    else:
+        prompt_lines.append("- (no heading styles found)")
+
+    prompt_lines.append("")
+    prompt_lines.append("Detected chapter heading candidates:")
+    for idx, style, txt in chapter_markers[: max_chapters + 5]:
+        prompt_lines.append(f"- [{style}] {txt}")
+
+    prompt_lines.append("")
+    prompt_lines.append(f"First {max_chapters} chapter excerpts:")
+
+    for i, (start_idx, style, title) in enumerate(chapter_markers[:max_chapters], 1):
+        end_idx = chapter_markers[i][0] if i < len(chapter_markers) else len(paras)
+        subheads = []
+        body_lines = []
+        for s, t in paras[start_idx + 1 : end_idx]:
+            if s in HEADING_STYLES and not CHAPTER_HEADING_RE.match(t.strip()):
+                subheads.append(f"[{s}] {t.strip()}")
+                continue
+            if s in HEADING_STYLES:
+                continue
+            if t.strip():
+                body_lines.append(t.strip())
+            if len(" ".join(body_lines)) > 2000:
+                break
+
+        prompt_lines.append(f"\nCHAPTER {i} HEADING: [{style}] {title}")
+        if subheads:
+            prompt_lines.append("SUBHEADINGS:")
+            for sh in subheads[:10]:
+                prompt_lines.append(f"- {sh}")
+        else:
+            prompt_lines.append("SUBHEADINGS: (none detected)")
+        if body_lines:
+            prompt_lines.append("BODY EXCERPT:")
+            prompt_lines.append("\n".join(body_lines[:10]))
+        else:
+            prompt_lines.append("BODY EXCERPT: (empty)")
+
+    prompt_lines.append("")
+    prompt_lines.append(
+        "Output JSON with keys: chapter_heading_style_names, subheading_style_names, "
+        "chapter_heading_regex, has_subheadings, notes."
+    )
+
+    return "\n".join(prompt_lines)
+
+
+def _maybe_analyze_structure(
+    s,
+    docx_path: str,
+    book: str | None,
+    out_path: str | None = None,
+    chapters: int = 3,
+) -> None:
+    """Run structure analysis if SambaNova is configured and report is missing."""
+    if not docx_path:
+        return
+
+    if not out_path:
+        if book:
+            out_path = str(get_book_metadata_path(book) / "chapter_structure.json")
+        else:
+            out_path = "chapter_structure.json"
+
+    if os.path.exists(out_path):
+        return
+
+    try:
+        _check_sambanova_env(s)
+    except SystemExit:
+        log.warning("SAMBANOVA_API_KEY missing; skipping structure analysis.")
+        return
+
+    log.info("Running structure analysis before processing...")
+    prompt = _build_structure_prompt(docx_path, max_chapters=chapters)
+    result = sambanova_chat_simple(
+        api_key=s.sambanova_api_key,
+        base_url=s.sambanova_base_url,
+        model=s.sambanova_model,
+        system_prompt="You are a manuscript structure analyst.",
+        user_text=prompt,
+        temperature=0.1,
+        top_p=0.1,
+    )
+
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(result)
+    log.info(f"Structure analysis written to: {out_path}")
+
+
+def _load_progress(progress_path: str) -> int | None:
+    if not progress_path or not os.path.exists(progress_path):
+        return None
+    try:
+        with open(progress_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return int(data.get("last_completed", 0)) if data else None
+    except Exception:
+        return None
+
+
+def _default_progress_path(book: str | None, mode: str) -> str:
+    filename = f"{mode}_progress.json"
+    if book:
+        return str(get_book_metadata_path(book) / filename)
+    return filename
 
 
 def get_book_context(args) -> str:
@@ -209,9 +356,34 @@ def main():
         "--rewrites-dir", default="rewrites", help="Directory for rewritten chapters"
     )
     p_rewrite_batch.add_argument(
+        "--resume", action="store_true", help="Resume from last completed chapter"
+    )
+    p_rewrite_batch.add_argument(
+        "--progress-path", default="", help="Path to progress file"
+    )
+    p_rewrite_batch.add_argument(
         "--book", help="Book name (uses registry if not specified)"
     )
 
+    p_rewrite_full = sub.add_parser(
+        "rewrite-full", help="Rewrite all chapters (single-turn)"
+    )
+    p_rewrite_full.add_argument(
+        "--bible", default="book_bible.md", help="Path to book bible"
+    )
+    p_rewrite_full.add_argument("--docx", default="", help="Path to source DOCX")
+    p_rewrite_full.add_argument(
+        "--rewrites-dir", default="rewrites", help="Directory for rewritten chapters"
+    )
+    p_rewrite_full.add_argument(
+        "--resume", action="store_true", help="Resume from last completed chapter"
+    )
+    p_rewrite_full.add_argument(
+        "--progress-path", default="", help="Path to progress file"
+    )
+    p_rewrite_full.add_argument(
+        "--book", help="Book name (uses registry if not specified)"
+    )
     p_search = sub.add_parser("search", help="Search index with a query")
     p_search.add_argument("query")
     p_search.add_argument("--k", type=int, default=10)
@@ -285,6 +457,37 @@ def main():
         help="Save intermediate turn outputs",
     )
     p_multiturn_batch.add_argument(
+        "--resume", action="store_true", help="Resume from last completed chapter"
+    )
+    p_multiturn_batch.add_argument(
+        "--progress-path", default="", help="Path to progress file"
+    )
+    p_multiturn_batch.add_argument(
+        "--book", help="Book name (uses registry if not specified)"
+    )
+
+    p_multiturn_full = sub.add_parser(
+        "multiturn-full", help="Rewrite all chapters using 3-turn pipeline"
+    )
+    p_multiturn_full.add_argument(
+        "--bible", default="book_bible.md", help="Path to book bible"
+    )
+    p_multiturn_full.add_argument("--docx", default="", help="Path to source DOCX")
+    p_multiturn_full.add_argument(
+        "--rewrites-dir", default="rewrites", help="Directory for rewritten chapters"
+    )
+    p_multiturn_full.add_argument(
+        "--save-intermediate",
+        action="store_true",
+        help="Save intermediate turn outputs",
+    )
+    p_multiturn_full.add_argument(
+        "--resume", action="store_true", help="Resume from last completed chapter"
+    )
+    p_multiturn_full.add_argument(
+        "--progress-path", default="", help="Path to progress file"
+    )
+    p_multiturn_full.add_argument(
         "--book", help="Book name (uses registry if not specified)"
     )
 
@@ -348,6 +551,21 @@ def main():
     )
     p_analyze_style.add_argument("--out", default="metadata/style_profile.json")
     p_analyze_style.add_argument(
+        "--book", help="Book name (uses registry if not specified)"
+    )
+
+    # Structure analysis command
+    p_analyze_structure = sub.add_parser(
+        "analyze-structure", help="Analyze chapter heading and subheading structure"
+    )
+    p_analyze_structure.add_argument("--docx", default="", help="Path to DOCX file")
+    p_analyze_structure.add_argument(
+        "--out", default="chapter_structure.json", help="Output path for report"
+    )
+    p_analyze_structure.add_argument(
+        "--chapters", type=int, default=3, help="Number of chapters to sample"
+    )
+    p_analyze_structure.add_argument(
         "--book", help="Book name (uses registry if not specified)"
     )
 
@@ -432,6 +650,7 @@ def main():
                 )
                 return
 
+        _maybe_analyze_structure(s, docx_path, book)
         log.info(f"Reading DOCX: {docx_path}")
         info = index_book(docx_path, s)
         log.info(
@@ -459,6 +678,8 @@ def main():
                 "No DOCX file specified and no book source found. Provide --docx."
             )
             return
+
+        _maybe_analyze_structure(s, docx_path, book)
 
         if bible_path:
             Path(bible_path).parent.mkdir(parents=True, exist_ok=True)
@@ -526,6 +747,19 @@ def main():
                 args.rewrites_dir = str(get_book_rewrites_path(book))
             if args.bible == "book_bible.md":
                 args.bible = str(get_book_metadata_path(book) / "book_bible.md")
+        progress_path = (
+            args.progress_path
+            if args.progress_path
+            else _default_progress_path(book, "rewrite_batch")
+        )
+        if args.resume:
+            last_completed = _load_progress(progress_path)
+            if last_completed:
+                start_idx = max(start_idx, last_completed)
+        if start_idx > end_idx:
+            log.info("All requested chapters are already completed. Nothing to do.")
+            console.print("[green]OK[/green] Nothing to do.")
+            return
         output_paths = rewrite_chapter_batch(
             start_idx=start_idx,
             end_idx=end_idx,
@@ -533,10 +767,61 @@ def main():
             book_bible_path=args.bible,
             docx_path=docx_path,
             rewrites_dir=args.rewrites_dir,
+            progress_path=progress_path,
         )
         log.info(f"Batch complete: {len(output_paths)} chapters rewritten")
         console.print(
             f"[green]OK[/green] Batch complete: {len(output_paths)} chapters rewritten."
+        )
+
+    elif args.cmd == "rewrite-full":
+        log.info("Single-turn full book rewrite...")
+        docx_path = args.docx if args.docx else None
+        if book:
+            if not docx_path:
+                source_dir = get_book_source_path(book)
+                docx_candidates = sorted(source_dir.glob("*.docx"))
+                if docx_candidates:
+                    docx_path = str(docx_candidates[0])
+            if args.rewrites_dir == "rewrites":
+                args.rewrites_dir = str(get_book_rewrites_path(book))
+            if args.bible == "book_bible.md":
+                args.bible = str(get_book_metadata_path(book) / "book_bible.md")
+        if not docx_path:
+            raise SystemExit("Error: --docx path required for full rewrite")
+
+        chapters = export_chapter_text(docx_path, s)
+        if not chapters:
+            raise SystemExit("No chapters found in DOCX.")
+
+        start_idx = 0
+        end_idx = len(chapters) - 1
+        progress_path = (
+            args.progress_path
+            if args.progress_path
+            else _default_progress_path(book, "rewrite_full")
+        )
+        if args.resume:
+            last_completed = _load_progress(progress_path)
+            if last_completed:
+                start_idx = max(start_idx, last_completed)
+        if start_idx > end_idx:
+            log.info("All chapters are already completed. Nothing to do.")
+            console.print("[green]OK[/green] Nothing to do.")
+            return
+
+        output_paths = rewrite_chapter_batch(
+            start_idx=start_idx,
+            end_idx=end_idx,
+            s=s,
+            book_bible_path=args.bible,
+            docx_path=docx_path,
+            rewrites_dir=args.rewrites_dir,
+            progress_path=progress_path,
+        )
+        log.info(f"Full rewrite complete: {len(output_paths)} chapters rewritten")
+        console.print(
+            f"[green]OK[/green] Full rewrite complete: {len(output_paths)} chapters rewritten."
         )
 
     elif args.cmd == "search":
@@ -631,6 +916,19 @@ def main():
                 args.rewrites_dir = str(get_book_rewrites_path(book))
             if args.bible == "book_bible.md":
                 args.bible = str(get_book_metadata_path(book) / "book_bible.md")
+        progress_path = (
+            args.progress_path
+            if args.progress_path
+            else _default_progress_path(book, "multiturn_batch")
+        )
+        if args.resume:
+            last_completed = _load_progress(progress_path)
+            if last_completed:
+                start_idx = max(start_idx, last_completed)
+        if start_idx > end_idx:
+            log.info("All requested chapters are already completed. Nothing to do.")
+            console.print("[green]OK[/green] Nothing to do.")
+            return
         output_paths = rewrite_chapter_multiturn_batch(
             start_idx=start_idx,
             end_idx=end_idx,
@@ -639,10 +937,66 @@ def main():
             docx_path=docx_path,
             rewrites_dir=args.rewrites_dir,
             save_intermediate=args.save_intermediate,
+            progress_path=progress_path,
         )
         log.info(f"Batch complete: {len(output_paths)} chapters rewritten")
         console.print(
             f"[green]OK[/green] Batch complete: {len(output_paths)} chapters rewritten."
+        )
+
+    elif args.cmd == "multiturn-full":
+        _check_multiturn_env(s)
+        log.info("Multi-turn full book rewrite...")
+        log.info(
+            "Using 3-turn pipeline: SambaNova (grammar) -> Kimi-Instruct (gaps/dialogue) -> Kimi-Thinking (final)"
+        )
+        docx_path = args.docx if args.docx else None
+        if book:
+            if not docx_path:
+                source_dir = get_book_source_path(book)
+                docx_candidates = sorted(source_dir.glob("*.docx"))
+                if docx_candidates:
+                    docx_path = str(docx_candidates[0])
+            if args.rewrites_dir == "rewrites":
+                args.rewrites_dir = str(get_book_rewrites_path(book))
+            if args.bible == "book_bible.md":
+                args.bible = str(get_book_metadata_path(book) / "book_bible.md")
+        if not docx_path:
+            raise SystemExit("Error: --docx path required for full rewrite")
+
+        chapters = export_chapter_text(docx_path, s)
+        if not chapters:
+            raise SystemExit("No chapters found in DOCX.")
+
+        start_idx = 0
+        end_idx = len(chapters) - 1
+        progress_path = (
+            args.progress_path
+            if args.progress_path
+            else _default_progress_path(book, "multiturn_full")
+        )
+        if args.resume:
+            last_completed = _load_progress(progress_path)
+            if last_completed:
+                start_idx = max(start_idx, last_completed)
+        if start_idx > end_idx:
+            log.info("All chapters are already completed. Nothing to do.")
+            console.print("[green]OK[/green] Nothing to do.")
+            return
+
+        output_paths = rewrite_chapter_multiturn_batch(
+            start_idx=start_idx,
+            end_idx=end_idx,
+            s=s,
+            book_bible_path=args.bible,
+            docx_path=docx_path,
+            rewrites_dir=args.rewrites_dir,
+            save_intermediate=args.save_intermediate,
+            progress_path=progress_path,
+        )
+        log.info(f"Full rewrite complete: {len(output_paths)} chapters rewritten")
+        console.print(
+            f"[green]OK[/green] Full rewrite complete: {len(output_paths)} chapters rewritten."
         )
 
     elif args.cmd == "extract-chars":
@@ -812,6 +1166,44 @@ def main():
 
         log.info(f"Enhanced Book Bible written to: {args.out}")
         console.print("[green]OK[/green] Enhanced Book Bible created.")
+
+    elif args.cmd == "analyze-structure":
+        """Analyze chapter and subheading structure from DOCX."""
+        _check_sambanova_env(s)
+
+        docx_path = args.docx if args.docx else None
+        if book:
+            if not docx_path:
+                source_dir = get_book_source_path(book)
+                docx_candidates = sorted(source_dir.glob("*.docx"))
+                if docx_candidates:
+                    docx_path = str(docx_candidates[0])
+            if args.out == "chapter_structure.json":
+                args.out = str(get_book_metadata_path(book) / "chapter_structure.json")
+
+        if not docx_path:
+            raise SystemExit("Error: --docx path required for structure analysis")
+
+        log.info(f"Analyzing structure from: {docx_path}")
+        prompt = _build_structure_prompt(docx_path, max_chapters=args.chapters)
+        result = sambanova_chat_simple(
+            api_key=s.sambanova_api_key,
+            base_url=s.sambanova_base_url,
+            model=s.sambanova_model,
+            system_prompt="You are a manuscript structure analyst.",
+            user_text=prompt,
+            temperature=0.1,
+            top_p=0.1,
+        )
+
+        out_dir = os.path.dirname(args.out)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        with open(args.out, "w", encoding="utf-8") as f:
+            f.write(result)
+
+        log.info(f"Structure analysis written to: {args.out}")
+        console.print("[green]OK[/green] Structure analysis complete.")
 
     elif args.cmd == "analyze-style":
         """Analyze writing style from rewritten chapters."""

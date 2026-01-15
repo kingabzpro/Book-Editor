@@ -43,10 +43,14 @@ def split_into_chapters(paras: List[Tuple[str, str]]) -> List[Dict]:
     """
     chapters: List[Dict] = []
     current = {"title": "Front Matter", "paras": []}
+    seen_chapter = False
 
     def push():
         nonlocal current
         if current["paras"]:
+            if not seen_chapter and current["title"] == "Front Matter":
+                current = {"title": "Untitled", "paras": []}
+                return
             chapters.append(current)
         current = {"title": "Untitled", "paras": []}
 
@@ -55,9 +59,13 @@ def split_into_chapters(paras: List[Tuple[str, str]]) -> List[Dict]:
             continue
         if is_chapter_heading(style, txt):
             push()
+            seen_chapter = True
             current["title"] = parse_chapter_title(txt)
         else:
-            current["paras"].append(txt)
+            if style in HEADING_STYLES:
+                current["paras"].append(f"### {txt.strip()}")
+            else:
+                current["paras"].append(txt)
 
     push()
     if not chapters:

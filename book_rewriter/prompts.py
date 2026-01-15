@@ -182,7 +182,8 @@ STYLE RULES:
 OUTPUT RULES:
 - Output only the rewritten chapter text in markdown.
 - Use ## for the chapter heading.
-- Do NOT use em dashes (—).
+- Preserve any subheadings from the source. Keep their exact wording and order, using ### for each.
+- Do NOT use em dashes (-).
 - Do NOT use contractions.
 """
 
@@ -198,7 +199,8 @@ RULES:
 - Do not add new plot, new characters, new reveals, or new backstory
 - Improve dialogue to be natural and credible for the situation (medical, police, conflict)
 - Expand key moments with sensory description and clear staging
-- Do NOT use em dashes (—) or contractions
+- Preserve any subheadings from the source using ### and keep their exact wording and order
+- Do NOT use em dashes (-) or contractions
 - Output ONLY the rewritten chapter in markdown with ## heading
 
 FULL CHAPTER TEXT TO REWRITE:
@@ -266,9 +268,10 @@ DO NOT:
 - Introduce new facts (use no UNKNOWN here; do not add placeholders)
 - Add sensory description or internal monologue
 - Rewrite dialogue for style (only correctness)
-- Use em dashes (—) or contractions
+- Use em dashes (-) or contractions
 
 OUTPUT ONLY the corrected chapter in markdown with ## heading.
+Preserve any subheadings from the source. Keep their exact wording and order, using ### for each.
 """
 
 GRAMMAR_BASELINE_USER_TEMPLATE = """CHAPTER: {chapter_idx} - {chapter_title}
@@ -279,6 +282,7 @@ TASK:
 Copyedit only. Preserve every event and detail exactly.
 
 OUTPUT ONLY the corrected chapter in markdown with ## heading.
+Preserve any subheadings from the source using ### and keep their exact wording and order.
 """
 
 
@@ -301,13 +305,14 @@ DO NOT:
 - Add new plot events, new characters, new backstory, or new reveals
 - Introduce unconfirmed facts (if not established, do not add it)
 - Solve mysteries early
-- Use em dashes (—) or contractions
+- Use em dashes (-) or contractions
 - Allow third-person POV slips in first-person narrative
 
 LENGTH:
 - Target 800 to 1,000 words total
 
 OUTPUT ONLY the rewritten chapter in markdown with ## heading.
+Preserve any subheadings from the source. Keep their exact wording and order, using ### for each.
 """
 
 FILL_GAPS_USER_TEMPLATE = """INPUT (Turn 1 output):
@@ -321,6 +326,7 @@ Rewrite for cinematic clarity, smooth transitions, realistic dialogue, and atmos
 Preserve every plot event and detail exactly. Do not add new facts.
 
 OUTPUT ONLY the rewritten chapter in markdown with ## heading.
+Preserve any subheadings from the source using ### and keep their exact wording and order.
 """
 
 # Turn 3: Final Draft with Improved Flow (Kimi-K2-Thinking)
@@ -346,13 +352,14 @@ DO:
 DO NOT:
 - Add new plot, characters, backstory, reveals, or facts
 - Introduce unconfirmed facts
-- Use em dashes (—) or contractions
+- Use em dashes (-) or contractions
 - Allow POV inconsistencies or third-person narration in first-person narrative
 
 LENGTH:
 - Target 2,000 to 3,000 words total
 
 OUTPUT ONLY the final chapter in markdown with ## heading.
+Preserve any subheadings from the source. Keep their exact wording and order, using ### for each.
 """
 
 FINAL_DRAFT_USER_TEMPLATE = """BOOK BIBLE:
@@ -372,6 +379,7 @@ Polish for final publication quality: flow, realism, subtext, continuity, motif 
 Preserve all events and details exactly.
 
 OUTPUT ONLY the final chapter in markdown with ## heading.
+Preserve any subheadings from the source using ### and keep their exact wording and order.
 """
 
 

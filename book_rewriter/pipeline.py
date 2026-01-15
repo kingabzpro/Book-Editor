@@ -1,6 +1,8 @@
 from typing import Any, Dict, List
 import logging
 import os
+import json
+import datetime
 import numpy as np
 
 from .config import Settings
@@ -298,6 +300,20 @@ CONTINUITY CONTEXT FROM NEARBY CHAPTERS:
     return out_path
 
 
+def _save_progress(progress_path: str, last_completed: int) -> None:
+    if not progress_path:
+        return
+    out_dir = os.path.dirname(progress_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    payload = {
+        "last_completed": last_completed,
+        "updated_at": datetime.datetime.now().isoformat(),
+    }
+    with open(progress_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+
 def rewrite_chapter_batch(
     start_idx: int,
     end_idx: int,
@@ -305,6 +321,7 @@ def rewrite_chapter_batch(
     book_bible_path: str = "book_bible.md",
     docx_path: str | None = None,
     rewrites_dir: str = "rewrites",
+    progress_path: str = "",
 ) -> List[str]:
     """
     Rewrite multiple chapters in sequence using single-turn pipeline.
@@ -339,6 +356,8 @@ def rewrite_chapter_batch(
                 docx_path=docx_path,
             )
             output_paths.append(result)
+            if progress_path:
+                _save_progress(progress_path, idx + 1)
         except Exception as e:
             log.error(f"Failed to rewrite chapter {idx}: {e}")
             raise
@@ -731,6 +750,7 @@ def rewrite_chapter_multiturn_batch(
     docx_path: str | None = None,
     rewrites_dir: str = "rewrites",
     save_intermediate: bool = False,
+    progress_path: str = "",
 ) -> List[str]:
     """
     Rewrite multiple chapters in sequence using multi-turn pipeline.
@@ -766,6 +786,8 @@ def rewrite_chapter_multiturn_batch(
                 save_intermediate=save_intermediate,
             )
             output_paths.append(out_path)
+            if progress_path:
+                _save_progress(progress_path, idx + 1)
         except Exception as e:
             log.error(f"Failed to rewrite chapter {idx}: {e}")
             raise
