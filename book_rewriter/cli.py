@@ -703,17 +703,22 @@ def main():
         if book:
             if not out_path:
                 out_path = str(
-                    get_book_rewrites_path(book) / f"chapter_{chapter_idx:02d}.md"
+                    get_book_rewrites_path(book) / f"chapter-{chapter_idx + 1:02d}.md"
                 )
             # Rewrite needs book bible path
-            if not bible_path:
+            if not bible_path or args.bible == "book_bible.md":
                 bible_path = os.path.join("books", book, "metadata", "book_bible.md")
+            if not args.docx:
+                source_dir = get_book_source_path(book)
+                docx_candidates = sorted(source_dir.glob("*.docx"))
+                if docx_candidates:
+                    args.docx = str(docx_candidates[0])
 
             log.info(f"Rewriting chapter {args.chapter_idx} (index {chapter_idx})...")
             out = rewrite_chapter(
                 chapter_idx,
                 s,
-                bible_path=bible_path,
+                book_bible_path=bible_path,
                 out_path=out_path,
                 docx_path=args.docx if args.docx else None,
             )
@@ -723,7 +728,7 @@ def main():
             out = rewrite_chapter(
                 chapter_idx,
                 s,
-                bible_path=bible_path,
+                book_bible_path=bible_path,
                 out_path=out_path,
                 docx_path=args.docx if args.docx else None,
             )
@@ -1227,10 +1232,14 @@ def main():
         # Read chapter texts
         chapter_texts = []
         for idx in chapter_indices:
-            chapter_path = os.path.join(args.rewrites_dir, f"chapter_{idx:02d}.md")
+            chapter_path = os.path.join(args.rewrites_dir, f"chapter-{idx + 1:02d}.md")
             if not os.path.exists(chapter_path):
-                log.warning(f"Chapter file not found: {chapter_path}")
-                continue
+                legacy_path = os.path.join(args.rewrites_dir, f"chapter_{idx:02d}.md")
+                if os.path.exists(legacy_path):
+                    chapter_path = legacy_path
+                else:
+                    log.warning(f"Chapter file not found: {chapter_path}")
+                    continue
 
             with open(chapter_path, "r", encoding="utf-8") as f:
                 text = f.read()
@@ -1583,7 +1592,11 @@ Return ONLY valid JSON in this format:
 
                 # Update chapter count
                 chapter_count = len(
-                    [f for f in os.listdir(rewrites_dest) if f.startswith("chapter_")]
+                    [
+                        f
+                        for f in os.listdir(rewrites_dest)
+                        if f.startswith("chapter-") or f.startswith("chapter_")
+                    ]
                 )
                 update_book_info(book_name, {"total_chapters": chapter_count})
 

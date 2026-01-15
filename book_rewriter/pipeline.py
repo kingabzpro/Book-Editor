@@ -3,6 +3,7 @@ import logging
 import os
 import json
 import datetime
+import re
 import numpy as np
 
 from .config import Settings
@@ -30,6 +31,34 @@ from .prompts import (
     FINAL_DRAFT_SYSTEM,
     FINAL_DRAFT_USER_TEMPLATE,
 )
+
+
+def _slugify(value: str) -> str:
+    text = (value or "").strip().lower().replace("_", " ")
+    text = re.sub(r"[^a-z0-9\s-]", "", text)
+    text = re.sub(r"\s+", "-", text)
+    text = re.sub(r"-{2,}", "-", text)
+    return text.strip("-") or "unknown-book"
+
+
+def _apply_front_matter(text: str, book_slug: str, title: str, order: int) -> str:
+    front_matter = (
+        "---\n"
+        f"book: \"{book_slug}\"\n"
+        f"title: \"{title}\"\n"
+        f"order: {order}\n"
+        "---\n"
+    )
+    # Remove leading chapter heading if present; front matter already carries title.
+    cleaned = text
+    if cleaned.lstrip().startswith("---\n"):
+        parts = text.split("---\n", 2)
+        if len(parts) >= 3:
+            cleaned = parts[2].lstrip("\n")
+    lines = cleaned.splitlines()
+    if lines and lines[0].strip().startswith("## "):
+        cleaned = "\n".join(lines[1:]).lstrip("\n")
+    return front_matter + "\n" + cleaned
 
 def build_chunks(docx_path: str, s: Settings) -> List[Dict[str, Any]]:
     log.info("Reading DOCX paragraphs...")
@@ -290,8 +319,12 @@ CONTINUITY CONTEXT FROM NEARBY CHAPTERS:
         temperature=0.5,
     )
 
+    order = chapter_idx + 1
+    book_slug = _slugify(getattr(s, "book_name", ""))
+    rewritten = _apply_front_matter(rewritten, book_slug, chapter_title, order)
+
     if not out_path:
-        out_path = f"rewrites/chapter_{chapter_idx:02d}.md"
+        out_path = f"rewrites/chapter-{order:02d}.md"
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
@@ -347,7 +380,8 @@ def rewrite_chapter_batch(
         log.info(f"{'='*60}\n")
 
         try:
-            out_path = f"{rewrites_dir}/chapter_{idx:02d}.md"
+            order = idx + 1
+            out_path = f"{rewrites_dir}/chapter-{order:02d}.md"
             result = rewrite_chapter(
                 chapter_idx=idx,
                 s=s,
@@ -447,17 +481,27 @@ def _load_previous_chapters(
 
     previous_texts = []
     for i in range(current_chapter_idx):
-        # Try to find the file (chapter_XX.md or chapter_X.md format)
-        for fmt in [f"chapter_{i:02d}.md", f"chapter_{i}.md"]:
+        # Try to find the file (chapter-XX.md or legacy chapter_XX.md)
+        order = i + 1
+        for fmt in [
+            f"chapter-{order:02d}.md",
+            f"chapter-{order}.md",
+            f"chapter_{i:02d}.md",
+            f"chapter_{i}.md",
+        ]:
             path = os.path.join(rewrites_dir, fmt)
             if os.path.exists(path):
                 with open(path, "r", encoding="utf-8") as f:
                     content = f.read()
-                    # Extract just the chapter content (skip the heading)
+                    # Extract just the chapter content (skip front matter and heading)
+                    if content.lstrip().startswith("---\n"):
+                        parts = content.split("---\n", 2)
+                        if len(parts) >= 3:
+                            content = parts[2].lstrip("\n")
                     lines = content.split("\n")
                     if lines and lines[0].startswith("##"):
                         content = "\n".join(lines[1:])
-                    previous_texts.append(f"---\n## PREVIOUS CHAPTER {i}\n{content}\n")
+                    previous_texts.append(f"---\n## PREVIOUS CHAPTER {order}\n{content}\n")
                 break
 
         # Stop if we have enough chapters
@@ -655,7 +699,8 @@ def rewrite_chapter_multiturn(
     log.info(f"Turn 1 complete. Output: {len(current_text)} characters")
 
     if save_intermediate:
-        intermediate_path = f"{rewrites_dir}/chapter_{chapter_idx:02d}_turn1_grammar.md"
+        order = chapter_idx + 1
+        intermediate_path = f"{rewrites_dir}/chapter-{order:02d}_turn1_grammar.md"
         os.makedirs(os.path.dirname(intermediate_path), exist_ok=True)
         with open(intermediate_path, "w", encoding="utf-8") as f:
             f.write(current_text)
@@ -688,7 +733,8 @@ def rewrite_chapter_multiturn(
     log.info(f"Turn 2 complete. Output: {len(current_text)} characters")
 
     if save_intermediate:
-        intermediate_path = f"{rewrites_dir}/chapter_{chapter_idx:02d}_turn2_gaps.md"
+        order = chapter_idx + 1
+        intermediate_path = f"{rewrites_dir}/chapter-{order:02d}_turn2_gaps.md"
         os.makedirs(os.path.dirname(intermediate_path), exist_ok=True)
         with open(intermediate_path, "w", encoding="utf-8") as f:
             f.write(current_text)
@@ -728,9 +774,13 @@ def rewrite_chapter_multiturn(
 
     # Save final output only
     if not out_path:
-        out_path = f"{rewrites_dir}/chapter_{chapter_idx:02d}.md"
+        order = chapter_idx + 1
+        out_path = f"{rewrites_dir}/chapter-{order:02d}.md"
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    order = chapter_idx + 1
+    book_slug = _slugify(getattr(s, "book_name", ""))
+    final_text = _apply_front_matter(final_text, book_slug, chapter_title, order)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(final_text)
 
