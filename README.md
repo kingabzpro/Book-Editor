@@ -1,71 +1,157 @@
 # Book Editor
 
-CLI pipeline to index a DOCX, build a Book Bible, and rewrite chapters with continuity and style control.
+Interactive CLI that turns a DOCX manuscript into polished, rewritten chapters.
+Powered by two models on [Nebius](https://studio.nebius.com):
+- **Kimi** (`KIMI_MODEL`) — fast rewriting and editing
+- **GLM** (`GLM_MODEL`) — analytical tasks like Bible generation
 
-## Requirements
-- Python 3.10+
-- API keys: Nebius (Kimi), Mistral (embeddings), optional SambaNova (multi-turn)
+---
 
 ## Setup
+
 ```bash
 python -m venv .venv
-.\.venv\Scripts\activate
+
+# Windows
+.venv\Scripts\activate
+# macOS / Linux
+source .venv/bin/activate
+
 pip install -r requirements.txt
 cp .env.example .env
 ```
 
-## Quick start
-```bash
-python -m book_rewriter.cli books create "Book/MyNovel.docx"
-python -m book_rewriter.cli index "Book/MyNovel.docx" --book "my_novel"
-python -m book_rewriter.cli bible --docx "Book/MyNovel.docx" --book "my_novel"
-python -m book_rewriter.cli rewrite 3 --book "my_novel"
+Open `.env` and set your Nebius API key:
+
+```
+NEBIUS_API_KEY=your_key_here
 ```
 
-## Commands (short form)
-Book management:
+Check [studio.nebius.com](https://studio.nebius.com) for available model IDs and
+update `KIMI_MODEL` / `GLM_MODEL` if needed.
+
+---
+
+## Launch
+
 ```bash
-python -m book_rewriter.cli books list
-python -m book_rewriter.cli books create "<docx_path>" --name "<book_name>"
-python -m book_rewriter.cli books set-active "<book_name>"
-python -m book_rewriter.cli books delete "<book_name>" --confirm
-python -m book_rewriter.cli books migrate
+python -m book_rewriter.cli
 ```
 
-Core pipeline:
-```bash
-python -m book_rewriter.cli index "<docx_path>" --book "<book_name>"
-python -m book_rewriter.cli bible --docx "<docx_path>" --book "<book_name>"
-python -m book_rewriter.cli bible-enhanced --docx "<docx_path>" --book "<book_name>"
-python -m book_rewriter.cli export-chapters "<docx_path>" --out chapters.json
-python -m book_rewriter.cli search "<query>"
+The interactive menu appears. Use the number/letter keys to navigate.
+
+---
+
+## Step-by-step guide
+
+### Option A — Full Auto (recommended for first run)
+
+This does everything in one go.
+
+```
+  a  AUTO  full pipeline: DOCX → Bible → rewrite all chapters
 ```
 
-Single-turn rewrite:
-```bash
-python -m book_rewriter.cli rewrite 3 --book "<book_name>"
-python -m book_rewriter.cli rewrite-batch 1 10 --book "<book_name>" --resume
-python -m book_rewriter.cli rewrite-full --book "<book_name>" --resume
-```
+1. Press **`a`** at the main menu.
+2. Enter the path to your DOCX file (e.g. `books/MyNovel/source/MyNovel.docx`).
+3. Enter a display name for the book (defaults to the filename).
+4. Confirm — the tool will:
+   - Parse all chapters from the DOCX and save them to `books/<name>/chapters.json`
+   - Generate the Book Bible using GLM and save it to `books/<name>/bible.md`
+   - Rewrite every chapter using Kimi and save each to `books/<name>/rewrites/chapter-XX.md`
+5. If interrupted (Ctrl+C), progress is saved. Use **Batch Rewrite** to resume.
 
-Multi-turn rewrite (SambaNova required):
-```bash
-python -m book_rewriter.cli multiturn 3 --book "<book_name>"
-python -m book_rewriter.cli multiturn-batch 1 10 --book "<book_name>" --resume --save-intermediate
-python -m book_rewriter.cli multiturn-full --book "<book_name>" --resume --save-intermediate
-python -m book_rewriter.cli multiturn-pro 3 --book "<book_name>" --bible "books/<book_name>/metadata/book_bible_enhanced.md"
-```
+---
 
-Analysis and utilities:
-```bash
-python -m book_rewriter.cli analyze-structure --book "<book_name>"
-python -m book_rewriter.cli extract-chars all --book "<book_name>"
-python -m book_rewriter.cli analyze-style --chapters 0-2 --book "<book_name>"
-python -m book_rewriter.cli validate-chapter "books/<book_name>/rewrites/chapter_03.md"
-python -m book_rewriter.cli edit "books/<book_name>/rewrites/chapter_03.md" "add more sensory detail"
-```
+### Option B — Step by step (manual control)
 
-Notes:
-- Chapters are 1-based for `rewrite`, `rewrite-batch`.
-- `--resume` uses a progress file and continues from the last completed chapter.
-- `multiturn-pro` uses `book_bible_enhanced.md` and the character ledger.
+Use this if you want to inspect or regenerate individual pieces.
+
+#### 1. Create a book
+
+Press **`1`** → **`2`** (Create book from DOCX).
+
+- Enter the path to your DOCX file.
+- Enter a display name.
+- The book is created and set as the active book.
+
+> You can have multiple books. Switch between them with **`1`** → **`1`** (Select active book).
+
+#### 2. Generate the Book Bible
+
+Press **`3`** (Bible).
+
+- Uses GLM to analyse the first 5 chapters and produce a structured reference document.
+- Saved to `books/<name>/bible.md`.
+- The bible is automatically included as context for all rewrites.
+- You can regenerate it at any time — press `3` again and confirm.
+
+#### 3. Rewrite a single chapter
+
+Press **`4`** (Rewrite).
+
+- A progress table shows all chapters and which ones are already done (✓).
+- Enter the chapter number.
+- The tool builds context from the 2 previous chapters + 1 upcoming chapter,
+  then calls Kimi to produce a polished rewrite.
+- Saved to `books/<name>/rewrites/chapter-XX.md` with YAML front matter.
+
+#### 4. Rewrite a range of chapters
+
+Press **`5`** (Batch Rewrite).
+
+- Enter a start and end chapter number.
+- Choose whether to skip already-rewritten chapters (default: yes — safe to resume).
+- Runs sequentially and prints word count for each chapter as it finishes.
+- Errors on individual chapters are logged but don't stop the batch.
+
+#### 5. Edit a chapter
+
+Press **`6`** (Edit).
+
+- Only works on chapters that have already been rewritten.
+- Enter the chapter number and a plain-English instruction, e.g.:
+  - `"Make the dialogue in the confrontation scene sharper and more tense"`
+  - `"Shorten the opening two paragraphs"`
+  - `"Change Elena's name to Mara throughout"`
+- The edit is applied by Kimi and the file is overwritten in place.
+
+#### 6. Check progress
+
+Press **`7`** (Progress).
+
+- Shows a table with every chapter, its original word count, and whether it has
+  been rewritten (✓).
+
+#### 7. View / change settings
+
+Press **`8`** (Settings).
+
+- Shows the active models, API key status, and word-count targets.
+- To change anything, edit `.env` and restart the CLI.
+
+---
+
+## Output files
+
+| Path | Contents |
+|------|----------|
+| `books/<name>/chapters.json` | All parsed chapters (source text + titles) |
+| `books/<name>/bible.md` | Book Bible generated by GLM |
+| `books/<name>/rewrites/chapter-XX.md` | Rewritten chapters (one file each) |
+| `books_registry.json` | Registry of all books and the active book |
+
+---
+
+## Configuration (`.env`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NEBIUS_API_KEY` | *(required)* | Your Nebius API key |
+| `NEBIUS_BASE_URL` | `https://api.studio.nebius.com/v1/` | Nebius endpoint |
+| `KIMI_MODEL` | `moonshotai/Kimi-K2.5-fast` | Model for rewriting / editing |
+| `GLM_MODEL` | `zai-org/GLM-5` | Model for Bible generation |
+| `TARGET_MIN` | `2000` | Minimum words per rewritten chapter |
+| `TARGET_MAX` | `3500` | Maximum words per rewritten chapter |
+| `PREV_CHAPTERS` | `2` | Preceding chapters included as context |
+| `NEXT_CHAPTERS` | `1` | Following chapters included as context |
