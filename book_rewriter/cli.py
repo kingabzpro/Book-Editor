@@ -4,19 +4,18 @@
 Usage:
     python -m book_rewriter.cli
 """
+
 import json
-import os
 import re
-import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, TextColumn
 
 load_dotenv()
 
@@ -30,19 +29,26 @@ REGISTRY_FILE = Path("books_registry.json")
 # ─── settings ────────────────────────────────────────────────────────────────
 def _settings():
     from .config import load_settings
+
     return load_settings()
 
 
 # ─── LLM ─────────────────────────────────────────────────────────────────────
 def _chat(model_key: str, system: str, user: str, temperature: float = 0.7) -> str:
-    """Call Nebius. model_key is 'kimi' or 'glm'."""
+    """Call Nebius. model_key is 'kimi' or 'glm'. Raises on failure."""
     from .models import chat
+
     s = _settings()
     if not s.nebius_api_key:
-        console.print("[red]NEBIUS_API_KEY is not set. Add it to your .env file.[/red]")
-        sys.exit(1)
+        raise RuntimeError("NEBIUS_API_KEY is not set. Add it to your .env file.")
     model = s.kimi_model if model_key == "kimi" else s.glm_model
-    return chat(s.nebius_api_key, s.nebius_base_url, model, system, user, temperature)
+    console.print(f"  [dim]Model: {model}[/dim]")
+    result = chat(s.nebius_api_key, s.nebius_base_url, model, system, user, temperature)
+    if not result or not result.strip():
+        raise RuntimeError(
+            f"Model returned an empty response. Check that '{model}' is available on Nebius."
+        )
+    return result
 
 
 # ─── registry ────────────────────────────────────────────────────────────────
@@ -53,11 +59,28 @@ def _load_registry() -> Dict:
 
 
 def _save_registry(reg: Dict):
-    REGISTRY_FILE.write_text(json.dumps(reg, indent=2, ensure_ascii=False), encoding="utf-8")
+    REGISTRY_FILE.write_text(
+        json.dumps(reg, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
 
 def _active_book() -> Optional[str]:
     return _load_registry().get("active_book")
+
+
+def _ask_docx_path(prompt: str = "  Path to DOCX file") -> Optional[Path]:
+    """Ask for a DOCX path, normalise it, and show available files if not found."""
+    raw = Prompt.ask(prompt).strip().strip('"').strip("'")
+    p = Path(raw.replace("\\", "/"))
+    if p.exists():
+        return p
+    console.print(f"  [red]File not found:[/red] {p}")
+    available = sorted(Path("books").glob("*/source/*.docx"))
+    if available:
+        console.print("  Available DOCX files in your books folder:")
+        for f in available:
+            console.print(f"    [cyan]{f}[/cyan]")
+    return None
 
 
 def _set_active(name: str):
@@ -120,11 +143,11 @@ def _rewritten_indices(name: str) -> List[int]:
     for p in d.iterdir():
         if p.suffix != ".md":
             continue
-        m = re.match(r"chapter-(\d+)\.md", p.name)   # new: chapter-01.md
+        m = re.match(r"chapter-(\d+)\.md", p.name)  # new: chapter-01.md
         if m:
             done.add(int(m.group(1)) - 1)
             continue
-        m = re.match(r"chapter_(\d+)\.md", p.name)   # old: chapter_00.md
+        m = re.match(r"chapter_(\d+)\.md", p.name)  # old: chapter_00.md
         if m:
             done.add(int(m.group(1)))
     return sorted(done)
@@ -194,6 +217,14 @@ def _sanitize(name: str) -> str:
     return name[:50]
 
 
+def _slugify(name: str) -> str:
+    """Produce a clean hyphen-separated slug for front matter."""
+    name = re.sub(r'[<>:"/\\|?*]', "", name)
+    name = name.strip().replace(" ", "-").replace("_", "-").lower()
+    name = re.sub(r"-{2,}", "-", name)
+    return name[:60]
+
+
 # ─── rewrite / bible helpers ─────────────────────────────────────────────────
 def _do_rewrite(book: str, chapters: List[Dict], idx: int, model: str = "kimi") -> str:
     from .prompts import REWRITE_SYSTEM, REWRITE_USER_TEMPLATE
@@ -217,15 +248,59 @@ def _do_rewrite(book: str, chapters: List[Dict], idx: int, model: str = "kimi") 
     return _chat(model, REWRITE_SYSTEM, user_prompt, temperature=0.7)
 
 
-def _save_rewrite(book: str, idx: int, title: str, text: str):
+def _clean_text(text: str) -> str:
+    """Strip leading/trailing whitespace and fix indented heading lines."""
+    lines = []
+    for line in text.splitlines():
+        # Remove leading spaces from markdown headings
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            lines.append(stripped)
+        else:
+            lines.append(line.rstrip())
+    return "\n".join(lines).strip()
+
+
+def _save_rewrite(book: str, idx: int, title: str, original_text: str, rewritten_text: str):
     _rewrites_dir(book).mkdir(parents=True, exist_ok=True)
-    slug = _sanitize(book)
-    front = f'---\nbook: "{slug}"\ntitle: "{title}"\norder: {idx + 1}\n---\n\n'
-    _rewrite_path(book, idx).write_text(front + text, encoding="utf-8")
+    book_slug = _slugify(book)
+    chapter_num = idx + 1
+    full_title = f"Chapter {chapter_num}"
+    front = (
+        f"---\n"
+        f'book: "{book_slug}"\n'
+        f'title: "{full_title}"\n'
+        f"order: {chapter_num}\n"
+        f"---\n\n"
+    )
+    _rewrite_path(book, idx).write_text(front + _clean_text(rewritten_text) + "\n", encoding="utf-8")
 
 
 def _word_count(text: str) -> int:
     return len(text.split())
+
+
+def _build_bible_excerpts(chapters: List[Dict], chars_per_chapter: int = 3500) -> str:
+    """Sample chapters spread across the whole book for a representative bible.
+
+    Takes: first 3, last 2, and up to 5 evenly spaced from the middle.
+    """
+    n = len(chapters)
+    if n <= 10:
+        sampled = chapters
+    else:
+        first = chapters[:3]
+        last = chapters[-2:]
+        middle = chapters[3:-2]
+        step = max(1, len(middle) // 5)
+        mid_sample = middle[::step][:5]
+        seen = {ch["idx"] for ch in first + last + mid_sample}
+        sampled = sorted(first + mid_sample + last, key=lambda c: c["idx"])
+
+    return "\n\n---\n\n".join(
+        f"[Chapter {ch['idx'] + 1}: {ch['title']}]\n{ch['text'][:chars_per_chapter]}"
+        for ch in sampled
+    )
 
 
 def _first_unwritten(chapters: List[Dict], done: List[int]) -> Optional[int]:
@@ -240,6 +315,7 @@ def _first_unwritten(chapters: List[Dict], done: List[int]) -> Optional[int]:
 # ═══════════════════════════════════════════════════════════════════════════════
 # MENU ACTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def _action_books():
     """Books sub-menu."""
@@ -259,7 +335,13 @@ def _action_books():
             t.add_column("Active", justify="center")
             for i, (k, v) in enumerate(books.items(), 1):
                 mark = "[green]✓[/green]" if k == active else ""
-                t.add_row(str(i), k, v.get("display_name", k), str(v.get("total_chapters", "?")), mark)
+                t.add_row(
+                    str(i),
+                    k,
+                    v.get("display_name", k),
+                    str(v.get("total_chapters", "?")),
+                    mark,
+                )
             console.print(t)
         else:
             console.print("  [dim]No books yet.[/dim]")
@@ -302,14 +384,11 @@ def _action_select_book(books: Dict):
 
 
 def _action_create_book():
-    docx = Prompt.ask("  Path to DOCX file").strip().strip('"')
-    if not Path(docx).exists():
-        console.print(f"  [red]File not found: {docx}[/red]")
+    docx = _ask_docx_path()
+    if not docx:
         return
 
-    display = Prompt.ask(
-        "  Book display name", default=Path(docx).stem
-    ).strip()
+    display = Prompt.ask("  Book display name", default=Path(docx).stem).strip()
     name = _sanitize(display)
 
     if (_book_dir(name) / "chapters.json").exists():
@@ -317,7 +396,9 @@ def _action_create_book():
             return
 
     _ensure_book_dirs(name)
-    with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console) as p:
+    with Progress(
+        SpinnerColumn(), TextColumn("{task.description}"), console=console
+    ) as p:
         p.add_task("  Parsing DOCX...", total=None)
         chapters = _load_docx(docx, name)
 
@@ -345,8 +426,11 @@ def _action_delete_book(books: Dict):
         n = int(raw) - 1
         if 0 <= n < len(keys):
             target = keys[n]
-            if Confirm.ask(f"  Delete '{target}'? This removes all rewrites.", default=False):
+            if Confirm.ask(
+                f"  Delete '{target}'? This removes all rewrites.", default=False
+            ):
                 import shutil
+
                 shutil.rmtree(_book_dir(target), ignore_errors=True)
                 reg = _load_registry()
                 reg["books"].pop(target, None)
@@ -365,13 +449,14 @@ def _action_load_docx():
         console.print("  [yellow]No active book. Create one first.[/yellow]")
         return
 
-    docx = Prompt.ask("  Path to DOCX file").strip().strip('"')
-    if not Path(docx).exists():
-        console.print(f"  [red]File not found: {docx}[/red]")
+    docx = _ask_docx_path()
+    if not docx:
         return
 
     if Confirm.ask("  This will overwrite existing chapters. Continue?", default=True):
-        with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console) as p:
+        with Progress(
+            SpinnerColumn(), TextColumn("{task.description}"), console=console
+        ) as p:
             p.add_task("  Parsing DOCX...", total=None)
             chapters = _load_docx(docx, book)
         if not chapters:
@@ -382,7 +467,9 @@ def _action_load_docx():
         reg = _load_registry()
         reg["books"].setdefault(book, {})["total_chapters"] = len(chapters)
         _save_registry(reg)
-        console.print(f"  [green]Loaded {len(chapters)} chapters into '{book}'.[/green]")
+        console.print(
+            f"  [green]Loaded {len(chapters)} chapters into '{book}'.[/green]"
+        )
 
 
 def _action_bible():
@@ -398,7 +485,9 @@ def _action_bible():
         console.rule("[bold]Book Bible[/bold]")
         console.print(bible[:3000])
         if len(bible) > 3000:
-            console.print(f"  [dim]... ({len(bible)} chars total — see {_bible_file(book)})[/dim]")
+            console.print(
+                f"  [dim]... ({len(bible)} chars total — see {_bible_file(book)})[/dim]"
+            )
         console.print()
         if not Confirm.ask("  Regenerate?", default=False):
             return
@@ -410,24 +499,29 @@ def _action_bible():
 
     from .prompts import BIBLE_SYSTEM, BIBLE_USER_TEMPLATE
 
-    # Use up to 5 chapters as excerpts (1500 chars each)
-    excerpts = "\n\n---\n\n".join(
-        f"[Chapter {ch['idx'] + 1}: {ch['title']}]\n{ch['text'][:1500]}"
-        for ch in chapters[:5]
+    excerpts = _build_bible_excerpts(chapters)
+    reg = _load_registry()
+    book_display = reg.get("books", {}).get(book, {}).get("display_name", book)
+    user_prompt = BIBLE_USER_TEMPLATE.format(
+        book_title=book_display,
+        total_chapters=len(chapters),
+        excerpt_count=excerpts.count("[Chapter "),
+        excerpts=excerpts,
     )
-    user_prompt = BIBLE_USER_TEMPLATE.format(excerpts=excerpts)
 
-    console.print(f"  Generating Book Bible with GLM model...")
-    with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console) as p:
-        p.add_task("  Calling GLM...", total=None)
+    console.print("  Generating Book Bible with GLM model...")
+    try:
         result = _chat("glm", BIBLE_SYSTEM, user_prompt, temperature=0.3)
+    except Exception as e:
+        console.print(f"  [red]Bible generation failed: {e}[/red]")
+        return
 
     _bible_file(book).write_text(result, encoding="utf-8")
     console.print(f"  [green]Bible saved to {_bible_file(book)}[/green]")
     console.print()
     console.print(result[:2000])
     if len(result) > 2000:
-        console.print(f"  [dim]... (truncated — full bible in file)[/dim]")
+        console.print("  [dim]... (truncated — full bible in file)[/dim]")
 
 
 def _action_rewrite():
@@ -461,11 +555,13 @@ def _action_rewrite():
     console.print(f"  Model: [cyan]{s.kimi_model}[/cyan] (Kimi fast)")
     console.print()
 
-    with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console) as p:
+    with Progress(
+        SpinnerColumn(), TextColumn("{task.description}"), console=console
+    ) as p:
         p.add_task(f"  Rewriting chapter {idx + 1}...", total=None)
         result = _do_rewrite(book, chapters, idx)
 
-    _save_rewrite(book, idx, ch["title"], result)
+    _save_rewrite(book, idx, ch["title"], ch["text"], result)
     wc = _word_count(result)
     console.print(f"  [green]Done![/green]  {wc} words → {_rewrite_path(book, idx)}")
 
@@ -493,7 +589,9 @@ def _action_batch_rewrite():
             f"  [yellow]Resuming from chapter {first_todo + 1}[/yellow]"
             f"  [dim]({len(done)}/{len(chapters)} already done)[/dim]"
         )
-    start = IntPrompt.ask(f"  Start chapter (1–{len(chapters)})", default=default_start) - 1
+    start = (
+        IntPrompt.ask(f"  Start chapter (1–{len(chapters)})", default=default_start) - 1
+    )
     end = IntPrompt.ask(f"  End chapter (1–{len(chapters)})", default=len(chapters)) - 1
 
     if not (0 <= start <= end < len(chapters)):
@@ -504,21 +602,30 @@ def _action_batch_rewrite():
     to_do = [i for i in range(start, end + 1) if not skip_done or i not in done]
 
     if not to_do:
-        console.print("  [green]Nothing to do — all chapters in range are already rewritten.[/green]")
+        console.print(
+            "  [green]Nothing to do — all chapters in range are already rewritten.[/green]"
+        )
         return
 
     s = _settings()
-    console.print(f"\n  Rewriting {len(to_do)} chapters with [cyan]{s.kimi_model}[/cyan]\n")
+    console.print(
+        f"\n  Rewriting {len(to_do)} chapters with [cyan]{s.kimi_model}[/cyan]\n"
+    )
 
     errors = []
     for pos, idx in enumerate(to_do, 1):
         ch = chapters[idx]
         console.print(f"  [{pos}/{len(to_do)}] Chapter {idx + 1}: {ch['title']}")
         try:
-            with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console, transient=True) as p:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("{task.description}"),
+                console=console,
+                transient=True,
+            ) as p:
                 p.add_task("  Calling model...", total=None)
                 result = _do_rewrite(book, chapters, idx)
-            _save_rewrite(book, idx, ch["title"], result)
+            _save_rewrite(book, idx, ch["title"], ch["text"], result)
             wc = _word_count(result)
             console.print(f"       [green]✓[/green] {wc} words")
         except Exception as e:
@@ -550,7 +657,9 @@ def _action_edit():
     console.print(f"  Rewritten chapters: {', '.join(str(i + 1) for i in done)}")
     idx = IntPrompt.ask(f"  Chapter number to edit (1–{len(chapters)})") - 1
     if idx not in done:
-        console.print("  [yellow]That chapter has not been rewritten yet. Run 'Rewrite' first.[/yellow]")
+        console.print(
+            "  [yellow]That chapter has not been rewritten yet. Run 'Rewrite' first.[/yellow]"
+        )
         return
 
     path = _rewrite_path(book, idx)
@@ -567,7 +676,9 @@ def _action_edit():
         instruction=instruction, chapter_text=current_text
     )
 
-    with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console) as p:
+    with Progress(
+        SpinnerColumn(), TextColumn("{task.description}"), console=console
+    ) as p:
         p.add_task("  Applying edit...", total=None)
         result = _chat("kimi", EDIT_SYSTEM, user_prompt, temperature=0.5)
 
@@ -593,17 +704,18 @@ def _action_auto():
         "  [cyan]3)[/cyan] Rewrite every chapter  [dim][Kimi][/dim]\n"
     )
 
-    docx = Prompt.ask("  Path to DOCX file").strip().strip('"')
-    if not Path(docx).exists():
-        console.print(f"  [red]File not found: {docx}[/red]")
+    docx = _ask_docx_path()
+    if not docx:
         return
 
-    display = Prompt.ask("  Book name", default=Path(docx).stem).strip()
+    display = Prompt.ask("  Book name", default=docx.stem).strip()
     name = _sanitize(display)
 
     s = _settings()
     if not s.nebius_api_key:
-        console.print("  [red]NEBIUS_API_KEY is not set. Add it to your .env file.[/red]")
+        console.print(
+            "  [red]NEBIUS_API_KEY is not set. Add it to your .env file.[/red]"
+        )
         return
 
     console.print(
@@ -622,7 +734,9 @@ def _action_auto():
             return
     _ensure_book_dirs(name)
 
-    with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console) as p:
+    with Progress(
+        SpinnerColumn(), TextColumn("{task.description}"), console=console
+    ) as p:
         p.add_task("  Parsing...", total=None)
         chapters = _load_docx(docx, name)
 
@@ -637,18 +751,31 @@ def _action_auto():
 
     # ── Step 2: generate Bible ────────────────────────────────────────────────
     console.print("\n[bold cyan]Step 2/3 — Generating Book Bible[/bold cyan]")
-    from .prompts import BIBLE_SYSTEM, BIBLE_USER_TEMPLATE, REWRITE_SYSTEM, REWRITE_USER_TEMPLATE
+    from .prompts import BIBLE_SYSTEM, BIBLE_USER_TEMPLATE
 
-    excerpts = "\n\n---\n\n".join(
-        f"[Chapter {ch['idx'] + 1}: {ch['title']}]\n{ch['text'][:1500]}"
-        for ch in chapters[:5]
-    )
-    with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console) as p:
-        p.add_task("  Calling GLM...", total=None)
-        bible_text = _chat("glm", BIBLE_SYSTEM, BIBLE_USER_TEMPLATE.format(excerpts=excerpts), temperature=0.3)
+    excerpts = _build_bible_excerpts(chapters)
+    try:
+        bible_text = _chat(
+            "glm",
+            BIBLE_SYSTEM,
+            BIBLE_USER_TEMPLATE.format(
+                book_title=display,
+                total_chapters=len(chapters),
+                excerpt_count=excerpts.count("[Chapter "),
+                excerpts=excerpts,
+            ),
+            temperature=0.3,
+        )
+    except Exception as e:
+        console.print(f"  [red]Bible generation failed: {e}[/red]")
+        console.print(
+            "  [yellow]Continuing without a Bible — rewrites will use chapter context only.[/yellow]"
+        )
+        bible_text = ""
 
-    _bible_file(name).write_text(bible_text, encoding="utf-8")
-    console.print(f"  [green]✓[/green] Bible saved → {_bible_file(name)}")
+    if bible_text:
+        _bible_file(name).write_text(bible_text, encoding="utf-8")
+        console.print(f"  [green]✓[/green] Bible saved → {_bible_file(name)}")
 
     # ── Step 3: rewrite all chapters ─────────────────────────────────────────
     already_done = _rewritten_indices(name)
@@ -660,19 +787,21 @@ def _action_auto():
     errors = []
     for pos, ch in enumerate(to_write, 1):
         real_idx = ch["idx"]
-        console.print(f"  [{pos}/{len(to_write)}] Chapter {real_idx + 1}: {ch['title']}")
+        console.print(
+            f"  [{pos}/{len(to_write)}] Chapter {real_idx + 1}: {ch['title']}"
+        )
         try:
-            with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console, transient=True) as p:
-                p.add_task("  Calling Kimi...", total=None)
-                result = _do_rewrite(name, chapters, real_idx)
-            _save_rewrite(name, real_idx, ch["title"], result)
+            result = _do_rewrite(name, chapters, real_idx)
+            _save_rewrite(name, real_idx, ch["title"], ch["text"], result)
             wc = _word_count(result)
             console.print(f"       [green]✓[/green] {wc} words")
         except KeyboardInterrupt:
-            console.print("\n  [yellow]Interrupted — progress saved. Run Batch Rewrite to resume.[/yellow]")
+            console.print(
+                "\n  [yellow]Interrupted — progress saved. Run Batch Rewrite to resume.[/yellow]"
+            )
             return
         except Exception as e:
-            console.print(f"       [red]✗ {e}[/red]")
+            console.print(f"       [red]✗ Error: {e}[/red]")
             errors.append((real_idx + 1, str(e)))
 
     # ── Summary ───────────────────────────────────────────────────────────────
@@ -683,7 +812,9 @@ def _action_auto():
         for ch_num, err in errors:
             console.print(f"    Chapter {ch_num}: {err}")
     else:
-        console.print(f"  [bold green]✓ All {len(chapters)} chapters rewritten![/bold green]")
+        console.print(
+            f"  [bold green]✓ All {len(chapters)} chapters rewritten![/bold green]"
+        )
     console.print(f"  Rewrites in: [cyan]{_rewrites_dir(name)}/[/cyan]")
     console.print(f"  Bible in   : [cyan]{_bible_file(name)}[/cyan]")
 
@@ -703,7 +834,10 @@ def _action_settings():
     t = Table(show_header=False, box=None, padding=(0, 2))
     t.add_column("Key", style="dim")
     t.add_column("Value", style="cyan")
-    t.add_row("Nebius API Key", ("*" * 8 + s.nebius_api_key[-4:]) if s.nebius_api_key else "[red]NOT SET[/red]")
+    t.add_row(
+        "Nebius API Key",
+        ("*" * 8 + s.nebius_api_key[-4:]) if s.nebius_api_key else "[red]NOT SET[/red]",
+    )
     t.add_row("Nebius Base URL", s.nebius_base_url)
     t.add_row("Kimi model (fast)", s.kimi_model)
     t.add_row("GLM model (analysis)", s.glm_model)
@@ -770,14 +904,29 @@ def _header():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _MENU = [
-    ("a", "AUTO           ", "full pipeline: DOCX → Bible → rewrite all chapters", _action_auto),
-    ("-", "",               "", None),  # visual separator
+    (
+        "a",
+        "AUTO           ",
+        "full pipeline: DOCX → Bible → rewrite all chapters",
+        _action_auto,
+    ),
+    ("-", "", "", None),  # visual separator
     ("1", "Books          ", "select / create / manage books", _action_books),
     ("2", "Load DOCX      ", "parse a .docx into chapters", _action_load_docx),
     ("3", "Bible          ", "generate or view the Book Bible  [GLM]", _action_bible),
     ("4", "Rewrite        ", "rewrite one chapter  [Kimi]", _action_rewrite),
-    ("5", "Batch Rewrite  ", "rewrite a range of chapters  [Kimi]", _action_batch_rewrite),
-    ("6", "Edit           ", "apply a targeted edit to a chapter  [Kimi]", _action_edit),
+    (
+        "5",
+        "Batch Rewrite  ",
+        "rewrite a range of chapters  [Kimi]",
+        _action_batch_rewrite,
+    ),
+    (
+        "6",
+        "Edit           ",
+        "apply a targeted edit to a chapter  [Kimi]",
+        _action_edit,
+    ),
     ("7", "Progress       ", "show which chapters are done", _action_progress),
     ("8", "Settings       ", "show current configuration", _action_settings),
 ]
@@ -804,7 +953,9 @@ def _resume_prompt() -> Optional[str]:
                 f"  Source DOCX found: [cyan]{source}[/cyan]"
             )
             if Confirm.ask("  Load chapters from DOCX now?", default=True):
-                with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console) as p:
+                with Progress(
+                    SpinnerColumn(), TextColumn("{task.description}"), console=console
+                ) as p:
                     p.add_task("  Parsing...", total=None)
                     chapters = _load_docx(source, book)
                 if chapters:
@@ -837,7 +988,7 @@ def _resume_prompt() -> Optional[str]:
         f"  Next up: Chapter {first_todo + 1}"
     )
     if Confirm.ask("  Continue batch rewriting from here?", default=True):
-        return "5"   # jump straight into batch rewrite
+        return "5"  # jump straight into batch rewrite
     return None
 
 
@@ -855,15 +1006,19 @@ def main():
             if fn is None:
                 console.print(f"  [dim]{'-' * 40}[/dim]")
             elif key == "a":
-                console.print(f"  [bold green]{key}[/bold green]  [bold green]{label}[/bold green] [dim]{desc}[/dim]")
+                console.print(
+                    f"  [bold green]{key}[/bold green]  [bold green]{label}[/bold green] [dim]{desc}[/dim]"
+                )
             else:
-                console.print(f"  [bold cyan]{key}[/bold cyan]  [bold]{label}[/bold] [dim]{desc}[/dim]")
-        console.print(f"  [bold cyan]q[/bold cyan]  [bold]Quit[/bold]")
+                console.print(
+                    f"  [bold cyan]{key}[/bold cyan]  [bold]{label}[/bold] [dim]{desc}[/dim]"
+                )
+        console.print("  [bold cyan]q[/bold cyan]  [bold]Quit[/bold]")
         console.print()
 
         if jump_to:
             choice = jump_to
-            jump_to = None   # only fires once
+            jump_to = None  # only fires once
         else:
             choice = Prompt.ask("  Choose", default="q").strip().lower()
 
@@ -883,6 +1038,7 @@ def main():
         else:
             console.print(f"  [red]Unknown option: {choice}[/red]")
             import time
+
             time.sleep(0.8)
 
 
