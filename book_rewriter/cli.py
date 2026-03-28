@@ -265,7 +265,7 @@ def _save_rewrite(book: str, idx: int, title: str, original_text: str, rewritten
     _rewrites_dir(book).mkdir(parents=True, exist_ok=True)
     book_slug = _slugify(book)
     chapter_num = idx + 1
-    full_title = f"Chapter {chapter_num}"
+    full_title = title if title else f"Chapter {chapter_num}"
     front = (
         f"---\n"
         f'book: "{book_slug}"\n'
